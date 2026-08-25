@@ -1,485 +1,444 @@
-# ESP32 Mesh Snapclient
+# ESP32 Mesh Snapclient with Opus and PCM5102A
 
-Multiroom-Audio-Client auf Basis eines ESP32-WROVER mit ESP-Mesh-Lite, Snapcast, Opus-Decodierung, Bluetooth A2DP Sink und ADAU1701 Audio-DSP.
+ESP32-based Snapcast client for bandwidth-efficient multiroom audio using ESP-Mesh-Lite, Opus decoding, Bluetooth A2DP, automatic source arbitration, and direct I2S output to a PCM5102/PCM5102A stereo DAC.
 
-Das Projekt ermöglicht die Wiedergabe von Snapcast-Audiostreams auf einem ESP32. Die Audiodaten werden über WLAN oder ESP-Mesh-Lite empfangen, auf dem ESP32 dekodiert und über I2S an einen ADAU1701 DSP ausgegeben.
+This branch replaces the ADAU1701 used by `feature/opus_ADAU` with a PCM5102A. SigmaStudio is not required.
 
-Zusätzlich kann das Gerät als Bluetooth-Audioempfänger (A2DP Sink) betrieben werden. Die Umschaltung zwischen Snapcast und Bluetooth erfolgt automatisch über einen Source-Arbiter.
+## Branches
 
----
+- `main`: stable project base
+- `feature/opus_ADAU`: validated Opus output through ADAU1701
+- `feature/opus_PCM5102`: Opus output through PCM5102A
 
-# Features
+## Features
 
-- Snapcast Client (Protocol Version 2)
-- Opus Decoder auf dem ESP32
-- ESP-Mesh-Lite Unterstützung
-- Bluetooth A2DP Sink
-- ADAU1701 DSP Audioausgabe
-- Automatische Quellenumschaltung
-- ESP32 als I2S-Master
-- 48 kHz Stereo Audio Pipeline
-- PSRAM-Unterstützung
-- Automatischer Start nach erfolgreicher WLAN-Verbindung
-- Reale ESP32 STA-MAC im Snapcast Hello
-- Opus-Wiedergabe erfolgreich getestet
+- Snapcast protocol version 2 client
+- Opus decoding through `78/esp-opus`
+- PCM stream support
+- ESP-Mesh-Lite 1.0.2
+- Wi-Fi STA and SoftAP operation
+- Mesh root and child operation
+- Bluetooth A2DP sink
+- Automatic Snapcast/A2DP source arbitration
+- ESP32 I2S master
+- 48 kHz, 16-bit, stereo audio
+- Real STA MAC as Snapcast client ID
+- Unique names such as `ESP32-SnapMesh-8844`
+- Snapclient start only after `IP_EVENT_STA_GOT_IP`
+- Automatic reconnect after network or server interruption
 
----
-
-# Systemarchitektur
-
-```text
-                        Snapserver
-                             |
-                             |
-                           Opus
-                             |
-                             v
-
-                     +---------------+
-                     |   Mesh-Lite   |
-                     +-------+-------+
-                             |
-                             v
-
-                     +---------------+
-                     |    ESP32      |
-                     |  Snapclient   |
-                     +-------+-------+
-                             |
-                       Opus Decoder
-                             |
-                             v
-
-                     +---------------+
-                     | Source Arbiter|
-                     +-------+-------+
-                             |
-                 +-----------+-----------+
-                 |                       |
-                 v                       v
-
-            Snapcast                A2DP Sink
-
-                             |
-                             v
-
-                     +---------------+
-                     |      I2S      |
-                     +-------+-------+
-                             |
-                             v
-
-                     +---------------+
-                     |   ADAU1701    |
-                     +-------+-------+
-                             |
-                             v
-
-                         Audio Out
-```
-
----
-
-# Hardware
-
-## Unterstützte Plattform
-
-Getestet mit:
+## Architecture
 
 ```text
-ESP32-WROVER
-8 MB PSRAM
-ESP-IDF 5.4.x
+Audio source
+    |
+    v
+Snapserver, codec=opus
+    |
+    v
+Wi-Fi / ESP-Mesh-Lite
+    |
+    v
+ESP32 Snapclient
+    |
+    v
+Opus decoder
+    |
+    v
+PCM 48 kHz / 16 bit / stereo
+    |
+    v
+Source arbiter <---- Bluetooth A2DP
+    |
+    v
+ESP32 I2S master
+    |
+    v
+PCM5102A stereo DAC
+    |
+    v
+Amplifier or active speakers
 ```
 
-Andere ESP32-Varianten können funktionieren, wurden jedoch nicht getestet.
+## Hardware
 
----
+### Required
 
-# Benötigte Hardware
+- ESP32 with classic Bluetooth support
+- PCM5102 or PCM5102A DAC module
+- Suitable power supply for the selected module
+- Common ground between ESP32, DAC, and amplifier
+- Stereo amplifier or active speakers
+- Snapserver reachable through the network
 
-## Pflichtkomponenten
-
-- ESP32-WROVER
-- ADAU1701 DSP Board
-- Lautsprecherverstärker
-- Lautsprecher
-- WLAN-Infrastruktur
-- Snapserver
-
-## Optional
-
-- Bluetooth Audioquelle
-- ESP-Mesh-Lite weitere Nodes
-
----
-
-# Verdrahtung
-
-## ESP32 → ADAU1701
+### Tested ESP32
 
 ```text
-ESP32                     ADAU1701
-
-GPIO0      MCLK      ---> MCLKI
-
-GPIO23     BCLK      ---> MP5
-GPIO22     LRCLK     ---> MP4
-GPIO21     SDATA     ---> MP0
-
-GND                  ---> DGND
+Chip: ESP32-D0WD-V3 revision 3.1
+CPU: dual core, 240 MHz
+Flash: 4 MB
+Physical PSRAM: 8 MB
+Mapped PSRAM: 4 MB
+Crystal: 40 MHz
 ```
 
----
+The firmware does not require 8 MB of mapped PSRAM. The Opus PCM buffer is 23,040 bytes. Minimum memory requirements for other boards have not yet been determined.
 
-# I2S Konfiguration
+## ESP32 to PCM5102A wiring
 
-Der ESP32 arbeitet als I2S-Master.
+The ESP32 is the I2S master. PCM5102A module labels vary, so verify the module schematic before connecting it.
+
+| Function | ESP32 | PCM5102A counterpart | Direction |
+|---|---:|---|---|
+| BCLK | GPIO23 | `BCK`, `BCLK` | ESP32 to DAC |
+| LRCLK | GPIO22 | `LCK`, `LRCK`, `WS` | ESP32 to DAC |
+| Serial data | GPIO21 | `DIN`, `DATA`, `SDIN` | ESP32 to DAC |
+| Ground | GND | `GND` | Common |
+| MCLK, optional | GPIO0 | `SCK` or `MCLK`, if required | ESP32 to DAC |
+
+Typical overview:
 
 ```text
-Sample Rate : 48 kHz
-MCLK        : 12.288 MHz
-BCLK        : 3.072 MHz
-LRCLK       : 48 kHz
+ESP32                              PCM5102A
+GPIO23  BCLK --------------------> BCK / BCLK
+GPIO22  LRCLK -------------------> LCK / LRCK / WS
+GPIO21  SDATA -------------------> DIN / DATA
+GPIO0   MCLK --------------------> optional SCK/MCLK
+GND     GND  --------------------> GND
+module supply -------------------> VIN/VCC/3V3 as specified
+
+PCM5102A LOUT -------------------> amplifier left input
+PCM5102A ROUT -------------------> amplifier right input
+PCM5102A GND  -------------------> amplifier signal ground
 ```
 
-Audioformat:
+Many PCM5102A modules recover their internal system clock from BCLK and do not require MCLK. Leave GPIO0 disconnected unless the selected module explicitly requires an external system clock.
+
+Do not connect passive loudspeakers directly to the PCM5102A line outputs. Use an amplifier or active speakers.
+
+## PCM5102A control pins
+
+Some modules expose additional pins:
+
+- `FMT`: select standard I2S format
+- `XSMT`: must permit normal operation and must not hold the DAC muted
+- `FLT`: digital-filter selection, normally the module default is sufficient
+- `DEMP`: de-emphasis, normally disabled for this project
+
+Many breakout boards already contain suitable pull resistors. Follow the documentation for the exact board.
+
+## I2S format
 
 ```text
-48 kHz
-16 Bit
-Stereo
+ESP32 role: master
+PCM5102A role: slave
+Protocol: Philips I2S
+Sample rate: 48,000 Hz
+Sample depth: signed 16-bit
+Channels: two, interleaved stereo
+LRCLK: 48 kHz
+MCLK: optional, depending on module
 ```
 
----
+The PCM5102A branch must validate the required I2S slot width for the selected module. Keep the working network and Opus path unchanged during that test.
 
-# ADAU1701 Konfiguration
+## Snapserver configuration
 
-## PLL
+Example `/etc/snapserver.conf`:
 
-```text
-PLLMODE0 = GND
-PLLMODE1 = VDD
+```ini
+[stream]
+stream = pipe:///tmp/snapfifo?name=Mopidy&sampleformat=48000:16:2&codec=opus&chunk_ms=20
+sampleformat = 48000:16:2
+codec = opus
+chunk_ms = 20
+buffer = 500
 ```
 
-## Clock Source
+Avoid conflicting values between URI parameters and default settings.
 
-Der ADAU1701 erhält seinen Master Clock direkt vom ESP32.
-
-```text
-MCLK = 12.288 MHz
-```
-
----
-
-# SigmaStudio
-
-## Verwendeter Betriebsmodus
-
-```text
-I2S Slave
-48 kHz
-Stereo
-```
-
-## Serial Input
-
-```text
-MP0 = SDATA_IN0
-MP4 = LRCLK
-MP5 = BCLK
-```
-
-## Minimales Routing
-
-```text
-Input Left  -> DAC Left
-Input Right -> DAC Right
-```
-
-Der erste Funktionstest sollte immer ohne EQ, Limiter oder zusätzliche DSP-Blöcke erfolgen.
-
----
-
-# ESP-IDF Installation
-
-Projekt basiert auf:
-
-```text
-ESP-IDF 5.4.x
-```
-
-Beispiel:
+Restart and inspect Snapserver:
 
 ```bash
-C:\esp\v5.4.3
+sudo systemctl restart snapserver
+sudo systemctl status snapserver --no-pager
+sudo journalctl -u snapserver -f
 ```
 
-Espressif Installation Guide:
+## Observed bandwidth
 
-https://docs.espressif.com/projects/esp-idf
+```text
+Opus transport: about 120,000 bytes per 5 seconds
+Decoded PCM: about 960,000 bytes per 5 seconds
+Transport reduction versus PCM: about 87.5 percent
+```
 
----
+Actual Opus bitrate depends on the signal and encoder settings.
 
-# Repository klonen
+## Software requirements
+
+- ESP-IDF 5.4.x
+- Git
+- ESP32 USB serial driver
+- Snapserver with Opus support
+
+Main ESP-IDF components:
+
+- `espressif/mesh_lite` 1.0.2
+- `espressif/iot_bridge`
+- `78/esp-opus`
+- ESP-IDF Bluetooth A2DP stack
+- ESP-IDF standard I2S driver
+
+## Clone and select this branch
 
 ```bash
 git clone https://github.com/pillepalle127/ESP32_Mesh_Snapclient.git
 cd ESP32_Mesh_Snapclient
+git switch feature/opus_PCM5102
 ```
 
----
-
-# Abhängigkeiten herunterladen
+## Resolve dependencies
 
 ```bash
 idf.py reconfigure
 ```
 
-Dabei werden benötigte Komponenten automatisch geladen.
+## Local configuration
 
-Unter anderem:
-
-```text
-espressif/mesh_lite
-78/esp-opus
-```
-
----
-
-# WLAN konfigurieren
-
-Vor dem Build müssen die lokalen WLAN-Daten eingetragen werden.
-
-Nicht im Repository enthalten:
-
-```text
-CONFIG_ROUTER_SSID
-CONFIG_ROUTER_PASSWORD
-```
-
-Konfiguration über:
+The local `sdkconfig` is excluded from Git because it can contain credentials and board-specific settings.
 
 ```bash
 idf.py menuconfig
 ```
 
-oder direkt über die lokale sdkconfig.
+Configure at least:
 
----
+- Router SSID and password
+- Snapserver address
+- Snapserver port, normally 1704
+- Mesh-Lite parameters
+- PSRAM parameters for the selected ESP32
 
-# Build
+Recommended `.gitignore` entries:
+
+```gitignore
+build/
+sdkconfig
+sdkconfig.old
+.vscode/
+.idea/
+*.log
+__pycache__/
+```
+
+## Build
 
 ```bash
 idf.py build
 ```
 
----
+## Find the serial port on Windows
 
-# Flashen
-
-```bash
-idf.py -p COM5 flash
+```powershell
+Get-CimInstance Win32_SerialPort | Select-Object DeviceID, Description, Manufacturer
 ```
 
-Mit Monitor:
+## Flash and monitor
 
 ```bash
 idf.py -p COM5 flash monitor
 ```
 
----
+Exit the monitor with `Ctrl+]`.
 
-# Betriebsablauf
-
-Nach dem Einschalten:
+## Startup sequence
 
 ```text
-1. WLAN verbinden
-2. Mesh-Lite starten
-3. IP-Adresse beziehen
-4. Snapclient starten
-5. Verbindung zum Snapserver herstellen
-6. Codec erkennen
-7. Opus dekodieren
-8. Audio über I2S ausgeben
+1. Initialize I2S and continuous clocks
+2. Start the source arbiter
+3. Initialize Wi-Fi STA and SoftAP
+4. Start ESP-Mesh-Lite
+5. Obtain an IP address
+6. Start Snapclient after IP_EVENT_STA_GOT_IP
+7. Connect to Snapserver port 1704
+8. Send Hello with the real STA MAC
+9. Receive the Opus CodecHeader
+10. Initialize the Opus decoder
+11. Decode WireChunks to PCM
+12. Feed PCM to the source arbiter
+13. Transmit PCM over I2S to PCM5102A
 ```
 
----
+## Unique client names
 
-# Erwartete Logmeldungen
-
-## WLAN verbunden
+Example:
 
 ```text
-GOT IP: 192.168.x.x
+STA MAC: A8:42:E3:AE:88:44
+Client name: ESP32-SnapMesh-8844
+Client ID: A8:42:E3:AE:88:44
 ```
 
-## Snapserver verbunden
+The same firmware can be flashed to multiple ESP32 devices. Every device receives a unique client ID and readable name from its factory STA MAC.
+
+## Expected logs
+
+Network:
 
 ```text
-verbunden mit Snapserver
+GOT IP: 192.168.x.x (Uplink steht)
+Snapclient nach GOT IP gestartet
 ```
 
-## Codec erkannt
+Snapcast and Opus:
 
 ```text
+verbunden mit Snapserver 192.168.x.x:1704
+Snapcast-Hello: Client=ESP32-SnapMesh-8844, ID=A8:42:E3:AE:88:44
 CodecHeader: codec=opus
+Opus-Decoder bereit: 48000 Hz, 2 Kanaele, PCM-Puffer=23040 B
 ```
 
-## Decoder aktiv
+Healthy stream:
 
 ```text
-Opus-Decoder bereit
+Stream stats/5s: codec=opus packets=250 wire=120000 B decoded_frames=250 decoded=960000 B arbiter=960000 B dropped=0 B decode_errors=0 src=1
 ```
 
-## Erfolgreiche Wiedergabe
+Healthy I2S path:
 
 ```text
-Stream stats/5s:
-codec=opus
-decoded=960000 B
-arbiter=960000 B
-dropped=0 B
-decode_errors=0
+I2S stats/5s: written=960000 B, errors=0, muted=0
 ```
 
----
+Small deviations are normal because logging windows and packet boundaries are not perfectly aligned.
 
-# Snapserver Konfiguration
+## Bluetooth A2DP
 
-Beispiel:
-
-```ini
-stream = pipe:///tmp/snapfifo?name=Mopidy
-
-sampleformat = 48000:16:2
-codec = opus
-chunk_ms = 20
-buffer = 200
-```
-
----
-
-# Bluetooth Betrieb
-
-Der ESP32 kann zusätzlich als Bluetooth-Lautsprecher verwendet werden.
-
-Bluetooth Name:
+Default advertised name:
 
 ```text
 SnapMesh-Speaker
 ```
 
----
-
-# Source Arbiter
-
-Priorisierung:
+Source behavior:
 
 ```text
-Bluetooth aktiv
-    ↓
-Snapcast pausiert
-
-Bluetooth beendet
-    ↓
-Snapcast verbindet erneut
+A2DP active -> arbiter selects A2DP -> Snapcast pauses
+A2DP stopped -> Snapcast reconnects automatically
 ```
 
-Dadurch wird immer nur eine Quelle wiedergegeben.
+Wi-Fi and Bluetooth share the 2.4 GHz radio. Validate simultaneous Mesh-Lite, SoftAP, ESP-NOW, Snapcast, and A2DP operation under realistic conditions.
 
----
+## First PCM5102A test
 
-# ESP-Mesh-Lite
+1. Confirm branch `feature/opus_PCM5102`.
+2. Connect BCLK, LRCLK, SDATA, and common ground.
+3. Power the module according to its documentation.
+4. Leave MCLK open unless required.
+5. Connect line outputs to an amplifier or active speakers.
+6. Build and flash.
+7. Confirm `CodecHeader: codec=opus`.
+8. Confirm `decode_errors=0` and `dropped=0`.
+9. Confirm BCLK, LRCLK, and SDATA with an oscilloscope if needed.
+10. Confirm that `XSMT` or another control pin is not muting the DAC.
 
-Das Projekt unterstützt:
+## Troubleshooting
+
+### No Snapserver connection
+
+Check IP acquisition, Snapserver host, port 1704, service status, firewall, and client group assignment.
+
+### Opus received but no decoded output
+
+`wire` increases while `decoded` remains zero. Verify `78/esp-opus`, decoder initialization, and `decode_errors`.
+
+### Decoded audio but no analog output
+
+Check GPIO23 to BCLK, GPIO22 to LRCLK, GPIO21 to DIN, common ground, supply voltage, `XSMT`, amplifier connection, and I2S slot compatibility.
+
+### Distorted audio or wrong speed
+
+Confirm 48 kHz throughout, `48000:16:2` on Snapserver, standard I2S format, correct clocks, and disabled de-emphasis unless explicitly required.
+
+### Bluetooth packet-drop warnings
+
+Messages such as `BT_APPL: Pkt dropped` concern the A2DP path. Check Snapcast statistics separately before attributing them to Opus or Mesh-Lite.
+
+## Security and Git hygiene
+
+Check whether local configuration files are tracked:
+
+```powershell
+git ls-files sdkconfig sdkconfig.old
+```
+
+Check for a known secret in current files and reachable history:
+
+```powershell
+git grep "YOUR_SECRET"
+git log -p --all | Select-String "YOUR_SECRET"
+```
+
+## Commit and push this README
+
+Confirm the correct branch:
+
+```powershell
+git branch --show-current
+```
+
+Expected:
 
 ```text
-Root Node
-Child Node
-Automatische Topologie
-Selbstheilung
+feature/opus_PCM5102
 ```
 
-Jeder Knoten besitzt einen eigenen TCP/IP Stack und eine eigene IP-Adresse.
+Stage, commit, and push:
 
----
-
-# Speicherbedarf
-
-Typischer Betrieb:
-
-```text
-ESP32-WROVER
-8 MB PSRAM
+```powershell
+git add README.md
+git commit -m "Document PCM5102A Opus branch"
+git push -u origin feature/opus_PCM5102
 ```
 
-Opus-PCM-Puffer:
+After the upstream is configured, later pushes require only:
 
-```text
-23040 Byte
+```powershell
+git push
 ```
 
----
+## Release criteria
 
-# Bekannte Einschränkungen
+- Opus decoder initializes successfully
+- `decode_errors=0`
+- `dropped=0`
+- Decoded PCM remains near 960,000 bytes per five seconds
+- I2S errors remain zero
+- Audible stereo output exists at the PCM5102A line outputs
+- A2DP source switching works
+- Snapcast reconnects after A2DP
+- Multiple ESP32 clients have unique names
+- Dynamic movement and RF obstruction tests remain stable
 
-- Aktuell auf 48 kHz Stereo ausgelegt.
-- ADAU1701 benötigt externen MCLK vom ESP32.
-- WLAN-Zugangsdaten müssen lokal konfiguriert werden.
-- SigmaStudio-Projekt ist nicht Bestandteil des Repositories.
-- Opus ist der primär getestete Codec.
+## Known limitations
 
----
+- Current audio format is 48 kHz stereo.
+- PCM5102A module labels and supply requirements vary.
+- Output is line level and needs amplification.
+- MCLK requirement depends on the module.
+- Dynamic RF performance requires application-specific validation.
+- Exact sample-time synchronization across multiple clients requires further validation.
 
-# Verifizierte Funktionen
+## License
 
-## Netzwerk
+Add or confirm the project license before wider redistribution. Retain all third-party notices, including the license files of `78/esp-opus`.
 
-- ✅ WLAN STA
-- ✅ SoftAP
-- ✅ ESP-Mesh-Lite
-- ✅ Root Node
-- ✅ Child Node
+## Acknowledgements
 
-## Snapcast
-
-- ✅ Verbindung zum Snapserver
-- ✅ Snapcast Protocol Version 2
-- ✅ Reconnect
-- ✅ Opus Streaming
-
-## Audio
-
-- ✅ Opus Decoder
-- ✅ PCM Pipeline
-- ✅ Source Arbiter
-- ✅ A2DP Umschaltung
-- ✅ I2S Ausgabe
-- ✅ ADAU1701 Eingang
-
-## System
-
-- ✅ PSRAM Nutzung
-- ✅ Automatischer Start nach GOT_IP
-- ✅ Reale STA-MAC im Snapcast Hello
-
----
-
-# Release Historie
-
-## v1.0
-
-- Mesh-Lite
-- Snapcast PCM
-- ADAU1701
-- A2DP
-
-## v1.1
-
-- Opus Decoder
-- Automatischer Start nach GOT_IP
-- Reale ESP32 STA-MAC
-- Reduzierte Netzwerkbandbreite
-- Vollständige Opus-Wiedergabe
+- Espressif ESP-IDF
+- Espressif ESP-Mesh-Lite
+- Espressif IoT Bridge
+- Xiph.Org Opus and `78/esp-opus`
+- Snapcast and Snapserver
