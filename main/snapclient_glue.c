@@ -232,7 +232,7 @@ static int tcp_connect(void)
  */
 static int send_hello(int socket_fd)
 {
-    uint8_t mac[6];
+    uint8_t mac[6] = {0};
 
     esp_err_t mac_result = esp_read_mac(
         mac,
@@ -241,18 +241,24 @@ static int send_hello(int socket_fd)
     if (mac_result != ESP_OK) {
         ESP_LOGE(
             TAG,
-            "STA-MAC konnte nicht gelesen werden: %s",
+            "WLAN-MAC konnte nicht gelesen werden: %s",
             esp_err_to_name(mac_result));
 
         return -1;
     }
 
-    char client_id[18];
+    /*
+     * Vollstaendige MAC-Adresse als stabile Snapcast-Client-ID.
+     *
+     * Beispiel:
+     *   A8:42:E3:AE:88:44
+     */
+    char mac_text[18];
 
-    snprintf(
-        client_id,
-        sizeof(client_id),
-        "%02x:%02x:%02x:%02x:%02x:%02x",
+    int mac_length = snprintf(
+        mac_text,
+        sizeof(mac_text),
+        "%02X:%02X:%02X:%02X:%02X:%02X",
         mac[0],
         mac[1],
         mac[2],
@@ -260,64 +266,127 @@ static int send_hello(int socket_fd)
         mac[4],
         mac[5]);
 
-    char hello_json[320];
+    if (mac_length <= 0 ||
+        mac_length >= (int)sizeof(mac_text)) {
+
+        ESP_LOGE(TAG, "MAC-Adresse konnte nicht formatiert werden");
+        return -1;
+    }
+
+    /*
+     * Eindeutiger und im Snapweb gut lesbarer Geraetename.
+     *
+     * Beispiel:
+     *   A8:42:E3:AE:88:44
+     *   -> ESP32-SnapMesh-8844
+     *
+     * Jeder ESP32 kann dadurch mit derselben Firmware betrieben werden.
+     */
+    char client_name[32];
+
+    int client_name_length = snprintf(
+        client_name,
+        sizeof(client_name),
+        "ESP32-SnapMesh-%02X%02X",
+        mac[4],
+        mac[5]);
+
+    if (client_name_length <= 0 ||
+        client_name_length >= (int)sizeof(client_name)) {
+
+        ESP_LOGE(TAG, "Clientname konnte nicht formatiert werden");
+        return -1;
+    }
+
+    /*
+     * Snapcast-Hello als laengenpraefixierter JSON-String.
+     *
+     * MAC:
+     *   stabile technische Client-ID
+     *
+     * HostName und ClientName:
+     *   gut lesbare Anzeige im Snapserver/Snapweb
+     */
+    char hello_json[384];
 
     int hello_length = snprintf(
         hello_json,
         sizeof(hello_json),
         "{"
         "\"MAC\":\"%s\","
-        "\"HostName\":\"snapmesh-%02x%02x%02x\","
+        "\"HostName\":\"%s\","
         "\"Version\":\"0.27.0\","
-        "\"ClientName\":\"ESP32-SnapMesh\","
+        "\"ClientName\":\"%s\","
         "\"OS\":\"esp-idf\","
         "\"Arch\":\"xtensa\","
         "\"Instance\":1,"
         "\"SnapStreamProtocolVersion\":2"
         "}",
-        client_id,
-        mac[3],
-        mac[4],
-        mac[5]);
+        mac_text,
+        client_name,
+        client_name);
 
-    if (hello_length < 0 ||
+    if (hello_length <= 0 ||
         hello_length >= (int)sizeof(hello_json)) {
 
-        ESP_LOGE(TAG, "Snapcast-Hello JSON zu lang");
+        ESP_LOGE(
+            TAG,
+            "Snapcast-Hello ist ungueltig oder zu lang");
+
         return -1;
     }
 
-    uint32_t payload_length = (uint32_t)hello_length;
+    uint32_t string_length =
+        (uint32_t)hello_length;
 
     snap_base_t header = {0};
+
     header.type = SNAP_MSG_HELLO;
-    header.size = sizeof(payload_length) + payload_length;
+    header.size =
+        sizeof(string_length) +
+        string_length;
 
     if (send_full(
             socket_fd,
             &header,
             sizeof(header)) != 0) {
+
+        ESP_LOGE(
+            TAG,
+            "Snapcast-Hello-Header konnte nicht gesendet werden");
+
         return -1;
     }
 
     if (send_full(
             socket_fd,
-            &payload_length,
-            sizeof(payload_length)) != 0) {
+            &string_length,
+            sizeof(string_length)) != 0) {
+
+        ESP_LOGE(
+            TAG,
+            "Snapcast-Hello-Laenge konnte nicht gesendet werden");
+
         return -1;
     }
 
     if (send_full(
             socket_fd,
             hello_json,
-            payload_length) != 0) {
+            string_length) != 0) {
+
+        ESP_LOGE(
+            TAG,
+            "Snapcast-Hello-Payload konnte nicht gesendet werden");
+
         return -1;
     }
 
     ESP_LOGI(
         TAG,
-        "Snapcast-Hello mit Client-ID %s",
-        client_id);
+        "Snapcast-Hello: Client=%s, ID=%s",
+        client_name,
+        mac_text);
 
     return 0;
 }
