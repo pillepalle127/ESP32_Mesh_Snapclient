@@ -36,31 +36,111 @@ static audio_src_t decide(void)
     return SRC_NONE;
 }
 
-/* Umschaltung mit Fade-out/Fade-in ueber Mute; Ringpuffer leeren. */
+/*
+ * Audioquelle umschalten.
+ *
+ * Wichtig:
+ * Beim Verlassen von A2DP muss der Snapclient auch dann fortgesetzt werden,
+ * wenn Snapcast wegen des geschlossenen Sockets noch nicht als aktiv gilt.
+ *
+ * Ohne diese Logik entsteht ein Deadlock:
+ *
+ *   A2DP aktiv
+ *       -> Snapcast pausiert
+ *       -> Snapcast-Socket geschlossen
+ *       -> s_snap_act = false
+ *
+ *   A2DP stoppt
+ *       -> s_a2dp_conn = false
+ *       -> decide() liefert SRC_NONE
+ *       -> Snapcast wird nie fortgesetzt
+ */
 static void switch_to(audio_src_t next)
 {
-    if (next == s_active) return;
+    audio_src_t previous = s_active;
 
-    ESP_LOGI(TAG, "switch %d -> %d", s_active, next);
-    audio_i2s_mute(true);                 /* Fade-out (hier: hartes Mute) */
-    vTaskDelay(pdMS_TO_TICKS(5));
-
-    /* Ringpuffer verwerfen, damit keine alten Frames der Altquelle durchlaufen */
-    size_t sz; void *p;
-    while ((p = xRingbufferReceive(s_rb, &sz, 0)) != NULL) {
-        vRingbufferReturnItem(s_rb, p);
+    if (next == previous) {
+        return;
     }
 
-    /* Koexistenz: bei A2DP den Snapclient-Socket pausieren (WLAN-Airtime
-     * frei), bei Rueckkehr zu Snapcast wieder reconnecten. */
-    if (s_snap_pause_cb) {
-        if (next == SRC_A2DP)          s_snap_pause_cb(true);
-        else if (next == SRC_SNAPCAST) s_snap_pause_cb(false);
+    ESP_LOGI(
+        TAG,
+        "switch %d -> %d",
+        previous,
+        next);
+
+    /*
+     * Ausgang während des Quellenwechsels stummschalten.
+     * Der I2S-Takt läuft dabei weiter.
+     */
+    audio_i2s_mute(true);
+    vTaskDelay(pdMS_TO_TICKS(5));
+
+    /*
+     * Alte Audiodaten vollständig aus dem Ringpuffer entfernen.
+     * Damit werden keine Frames der vorherigen Quelle ausgegeben.
+     */
+    if (s_rb != NULL) {
+        size_t item_size = 0;
+        void *item = NULL;
+
+        while ((item = xRingbufferReceive(
+                    s_rb,
+                    &item_size,
+                    0)) != NULL) {
+
+            vRingbufferReturnItem(
+                s_rb,
+                item);
+        }
+    }
+
+    /*
+     * Snapcast pausieren, sobald tatsächlich auf A2DP gewechselt wird.
+     */
+    if (next == SRC_A2DP) {
+        if (s_snap_pause_cb != NULL) {
+            ESP_LOGI(
+                TAG,
+                "A2DP aktiv -> Snapclient pausieren");
+
+            s_snap_pause_cb(true);
+        }
+    }
+
+    /*
+     * Snapcast fortsetzen, sobald A2DP verlassen wird.
+     *
+     * Das gilt auch für:
+     *
+     *   SRC_A2DP -> SRC_NONE
+     *
+     * Denn der Snapclient ist zu diesem Zeitpunkt noch pausiert und kann
+     * erst nach dem Resume wieder verbinden und s_snap_act=true setzen.
+     */
+    if (previous == SRC_A2DP &&
+        next != SRC_A2DP) {
+
+        if (s_snap_pause_cb != NULL) {
+            ESP_LOGI(
+                TAG,
+                "A2DP nicht mehr aktiv -> Snapclient fortsetzen");
+
+            s_snap_pause_cb(false);
+        }
     }
 
     s_active = next;
+
     vTaskDelay(pdMS_TO_TICKS(5));
-    audio_i2s_mute(false);                /* Fade-in */
+
+    /*
+     * Ausgang wieder freigeben.
+     *
+     * Bei SRC_NONE schreibt der Player weiterhin Nullframes, deshalb kann
+     * Mute aufgehoben werden, ohne undefinierte Daten auszugeben.
+     */
+    audio_i2s_mute(false);
 }
 
 /* --- Mixer/Player-Task: Ringpuffer -> I2S -------------------------------- */

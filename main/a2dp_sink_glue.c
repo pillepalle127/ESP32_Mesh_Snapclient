@@ -77,34 +77,136 @@ static uint32_t sbc_sample_rate(const uint8_t *cie)
 }
 
 /* --- A2DP Event-Callback (Connection / Audio-Config) ---------------------- */
-static void a2d_cb(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param)
+static void a2d_cb(
+    esp_a2d_cb_event_t event,
+    esp_a2d_cb_param_t *param)
 {
+    if (param == NULL) {
+        ESP_LOGW(
+            TAG,
+            "A2DP-Event ohne Parameter: event=%d",
+            (int)event);
+
+        return;
+    }
+
     switch (event) {
-    case ESP_A2D_CONNECTION_STATE_EVT: {
-        esp_a2d_connection_state_t st = param->conn_stat.state;
-        if (st == ESP_A2D_CONNECTION_STATE_CONNECTED) {
-            ESP_LOGI(TAG, "A2DP connected -> Snapclient wird pausiert");
-            arbiter_set_a2dp_connected(true);
-        } else if (st == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
-            ESP_LOGI(TAG, "A2DP disconnected -> Snapclient wieder frei");
-            arbiter_set_a2dp_connected(false);
+        case ESP_A2D_CONNECTION_STATE_EVT: {
+            esp_a2d_connection_state_t state =
+                param->conn_stat.state;
+
+            switch (state) {
+                case ESP_A2D_CONNECTION_STATE_CONNECTED:
+                    ESP_LOGI(
+                        TAG,
+                        "A2DP verbunden");
+
+                    break;
+
+                case ESP_A2D_CONNECTION_STATE_DISCONNECTED:
+                    ESP_LOGI(
+                        TAG,
+                        "A2DP getrennt -> Snapclient wieder frei");
+
+                    arbiter_set_a2dp_connected(false);
+                    break;
+
+                case ESP_A2D_CONNECTION_STATE_CONNECTING:
+                    ESP_LOGI(
+                        TAG,
+                        "A2DP-Verbindung wird aufgebaut");
+                    break;
+
+                case ESP_A2D_CONNECTION_STATE_DISCONNECTING:
+                    ESP_LOGI(
+                        TAG,
+                        "A2DP-Verbindung wird getrennt");
+                    break;
+
+                default:
+                    ESP_LOGW(
+                        TAG,
+                        "Unbekannter A2DP-Verbindungsstatus: %d",
+                        (int)state);
+                    break;
+            }
+
+            break;
         }
-        break;
-    }
-    case ESP_A2D_AUDIO_CFG_EVT: {
-        if (param->audio_cfg.mcc.type == ESP_A2D_MCT_SBC) {
-            uint32_t sr = sbc_sample_rate(param->audio_cfg.mcc.cie.sbc);
-            resampler_init(&s_resamp, sr, AUDIO_I2S_SAMPLE_RATE);
-            ESP_LOGI(TAG, "A2DP audio cfg: SBC %lu Hz -> resample %d Hz",
-                     (unsigned long)sr, AUDIO_I2S_SAMPLE_RATE);
+
+        case ESP_A2D_AUDIO_CFG_EVT: {
+            if (param->audio_cfg.mcc.type != ESP_A2D_MCT_SBC) {
+                ESP_LOGW(
+                    TAG,
+                    "Nicht unterstuetzter A2DP-Codec: %d",
+                    (int)param->audio_cfg.mcc.type);
+
+                break;
+            }
+
+            const uint8_t *sbc_cie =
+                param->audio_cfg.mcc.cie.sbc;
+
+            uint32_t sample_rate =
+                sbc_sample_rate(sbc_cie);
+
+            resampler_init(
+                &s_resamp,
+                sample_rate,
+                AUDIO_I2S_SAMPLE_RATE);
+
+            ESP_LOGI(
+                TAG,
+                "A2DP audio cfg: SBC %lu Hz -> resample %d Hz",
+                (unsigned long)sample_rate,
+                AUDIO_I2S_SAMPLE_RATE);
+
+            break;
         }
-        break;
-    }
-    case ESP_A2D_AUDIO_STATE_EVT:
-        ESP_LOGI(TAG, "A2DP audio state=%d", param->audio_stat.state);
-        break;
-    default:
-        break;
+
+        case ESP_A2D_AUDIO_STATE_EVT: {
+            esp_a2d_audio_state_t state =
+                param->audio_stat.state;
+
+            ESP_LOGI(
+                TAG,
+                "A2DP audio state=%d",
+                (int)state);
+
+            if (state == ESP_A2D_AUDIO_STATE_STARTED) {
+                /*
+                 * Erst bei wirklich laufendem Audiostream auf A2DP
+                 * umschalten. Eine reine Bluetooth-Verbindung reicht
+                 * hierfür nicht aus.
+                 */
+                ESP_LOGI(
+                    TAG,
+                    "A2DP Audiostream gestartet -> Snapclient wird pausiert");
+
+                arbiter_set_a2dp_connected(true);
+            } else {
+                /*
+                 * STOPPED und REMOTE_SUSPEND werden gemeinsam behandelt.
+                 * In der verwendeten ESP-IDF-Version koennen beide
+                 * Konstanten denselben Wert besitzen. Deshalb kein
+                 * separater case fuer REMOTE_SUSPEND.
+                 */
+                ESP_LOGI(
+                    TAG,
+                    "A2DP Audiostream gestoppt -> Snapclient wieder frei");
+
+                arbiter_set_a2dp_connected(false);
+            }
+
+            break;
+        }
+
+        default:
+            ESP_LOGD(
+                TAG,
+                "Unbehandeltes A2DP-Event: %d",
+                (int)event);
+            break;
     }
 }
 
