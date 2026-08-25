@@ -1,0 +1,10 @@
+build/
+sdkconfig.old
+
+.vscode/
+.idea/
+
+*.log
+*.tmp
+
+__pycache__/

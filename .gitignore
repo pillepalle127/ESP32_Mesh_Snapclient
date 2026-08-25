@@ -1,0 +1,19 @@
+# ESP-IDF
+build/
+sdkconfig.old
+
+# Visual Studio Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Python
+__pycache__/
+
+# Serial monitor logs
+*.log

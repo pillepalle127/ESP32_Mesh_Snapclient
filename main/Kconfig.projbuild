@@ -1,0 +1,39 @@
+menu "Snapclient Mesh Project Configuration"
+
+    config ROUTER_SSID
+        string "Router SSID"
+        default "myssid"
+        help
+            SSID des Uplink-Routers fuer den Mesh-Root-Knoten.
+
+    config ROUTER_PASSWORD
+        string "Router password"
+        default "mypassword"
+        help
+            WPA2-Passwort des Uplink-Routers.
+
+    config MESH_SOFTAP_SSID_PREFIX
+        string "Mesh SoftAP SSID prefix"
+        default "SnapMesh"
+        help
+            Praefix fuer die knoteneigenen SoftAP-SSIDs im Mesh.
+
+    config MESH_SOFTAP_PASSWORD
+        string "Mesh SoftAP password"
+        default "meshpassword"
+        help
+            Passwort fuer die Inter-Node-SoftAP-Verbindungen (min. 8 Zeichen).
+
+    config SNAPSERVER_HOST
+        string "Snapserver hostname/IP"
+        default "192.168.1.10"
+        help
+            Adresse des Snapcast-Servers.
+
+    config SNAPSERVER_PORT
+        int "Snapserver port"
+        default 1704
+        help
+            Snapcast-Stream-Port (Default 1704).
+
+endmenu
