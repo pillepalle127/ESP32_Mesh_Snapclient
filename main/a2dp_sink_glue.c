@@ -34,14 +34,46 @@ static int16_t s_out[2048 * 2];
 /* --- SBC-Sample-Rate aus Codec-Info (Byte 0, Frequenz-Bits) ableiten ------ */
 static uint32_t sbc_sample_rate(const uint8_t *cie)
 {
-    /* ESP_A2D_MCT_SBC: cie[0] Bit7..6 = Sampling frequency */
-    switch (cie[0] & 0xC0) {
-        case 0x00: return 16000;
-        case 0x40: return 32000;
-        case 0x80: return 44100;
-        case 0xC0: return 48000;
-        default:   return 44100;
+    if (cie == NULL) {
+        ESP_LOGW(TAG, "SBC codec info fehlt, verwende 44100 Hz");
+        return 44100;
     }
+
+    /*
+     * SBC Codec Information Element, Byte 0:
+     *
+     * Bit 7 = 16 kHz
+     * Bit 6 = 32 kHz
+     * Bit 5 = 44,1 kHz
+     * Bit 4 = 48 kHz
+     *
+     * Bei der ausgehandelten Konfiguration sollte genau eines
+     * dieser Bits gesetzt sein.
+     */
+    const uint8_t frequency_bits = cie[0] & 0xF0;
+
+    if (frequency_bits & 0x10) {
+        return 48000;
+    }
+
+    if (frequency_bits & 0x20) {
+        return 44100;
+    }
+
+    if (frequency_bits & 0x40) {
+        return 32000;
+    }
+
+    if (frequency_bits & 0x80) {
+        return 16000;
+    }
+
+    ESP_LOGW(
+        TAG,
+        "Unbekannte SBC-Samplerate: cie[0]=0x%02X, verwende 44100 Hz",
+        cie[0]);
+
+    return 44100;
 }
 
 /* --- A2DP Event-Callback (Connection / Audio-Config) ---------------------- */
