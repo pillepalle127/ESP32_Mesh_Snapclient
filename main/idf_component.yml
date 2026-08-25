@@ -3,3 +3,5 @@ dependencies:
     version: ">=5.4.0,<5.5.0"
   espressif/mesh_lite:
     version: "==1.0.2"
+  78/esp-opus:
+    version: "==1.0.5"

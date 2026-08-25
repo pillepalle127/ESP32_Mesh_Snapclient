@@ -1,5 +1,6 @@
 # ESP-IDF
 build/
+sdkconfig
 sdkconfig.old
 
 # Visual Studio Code
