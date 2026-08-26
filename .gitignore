@@ -1,20 +1,21 @@
-# ESP-IDF
+# ESP-IDF build output
 build/
 sdkconfig
 sdkconfig.old
 
-# Visual Studio Code
-.vscode/
+# Generated binaries and local NVS images
+nvs.bin
+*.elf
+*.map
 
-# JetBrains
-.idea/
+# Editor and merge artifacts
+*.swp
+*.swo
+*_BASE_*
+*_LOCAL_*
+*_REMOTE_*
+*_BACKUP_*
 
-# Windows
+# OS files
+.DS_Store
 Thumbs.db
-Desktop.ini
-
-# Python
-__pycache__/
-
-# Serial monitor logs
-*.log

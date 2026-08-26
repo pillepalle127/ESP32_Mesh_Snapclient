@@ -1,128 +1,91 @@
-# ESP32 Mesh Snapclient
+# ESP32 Mesh-Lite Snapclient mit A2DP
 
-ESP32-basierter Snapcast-Client mit Bluetooth A2DP, automatischer Quellenumschaltung und Unterstützung für PCM5102A sowie ADAU1701.
+ESP32-WROVER-basierter Audio-Client für Snapcast-Audio über ESP-Mesh-Lite sowie lokales Bluetooth-A2DP. Die Ausgabe erfolgt über I2S an einen PCM5102A oder ADAU1701.
 
-## Features
+## Funktionen
 
-- Snapcast Client (Opus)
-- ESP-Mesh-Lite
-- Bluetooth A2DP Sink
-- Automatische Quellenumschaltung
-- 48 kHz Stereo Audio Pipeline
-- PCM5102A Unterstützung
-- ADAU1701 Unterstützung
-- ESP32-WROVER empfohlen
-
----
-
-## Audio-Pipeline
-
-```text
-Snapcast (Opus)
-          │
-          ▼
-Bluetooth A2DP
-          │
-          ▼
-     Source Arbiter
-          │
-          ▼
-          I2S
-          │
- ┌────────┴────────┐
- │                 │
- ▼                 ▼
-PCM5102A       ADAU1701
-```
-
----
+- Snapcast-Client mit Opus- und PCM-Wiedergabe
+- ESP-Mesh-Lite für Root-/Child-Topologien
+- lokaler Bluetooth-A2DP-Sink
+- automatische Quellenumschaltung
+- 48 kHz, 16 Bit, Stereo
+- Ausgabe an PCM5102A oder ADAU1701
+- eindeutige Namen aus den letzten vier Stellen der WLAN-STA-MAC
 
 ## Quellenpriorität
 
 ```text
-Bluetooth A2DP
+A2DP-Audiostream aktiv
         ↓
-     Snapcast
+      A2DP
+        ↓
+kein A2DP-Audiostream
+        ↓
+    Snapcast
+        ↓
+keine Netzwerkquelle
         ↓
       Stille
 ```
 
-Verhalten:
+Eine reine Bluetooth-Verbindung schaltet die Quelle nicht um. Erst `ESP_A2D_AUDIO_STATE_STARTED` aktiviert A2DP. Beim Stoppen, Pausieren oder Trennen wird der Snapclient wieder freigegeben und verbindet sich erneut mit dem Snapserver.
+
+## Audiopfad
 
 ```text
-A2DP Audio STARTED
-    → Snapcast wird pausiert
-
-A2DP Audio STOPPED
-    → Snapcast wird automatisch wieder verbunden
+Snapserver -> Opus -> ESP32 Opus-Decoder --+
+                                             +-> Source-Arbiter -> I2S -> DAC/DSP
+Smartphone -> A2DP/SBC -> Resampler -------+
 ```
 
-Es wird immer nur eine Audioquelle gleichzeitig ausgegeben.
+A2DP liefert üblicherweise 44,1 kHz. Der ESP32 resampelt den dekodierten SBC-PCM-Strom auf die feste I2S-Samplerate von 48 kHz.
 
----
+## Hardware
 
-## PCM5102A Anschluss
+### Empfohlen
 
-### Pinning
+- klassischer ESP32-WROVER
+- Bluetooth Classic für A2DP
+- PSRAM für Mesh-Lite, Netzwerk, Bluetooth und Opus
+- ESP-IDF 5.4.3 als getesteter Stand
 
-```text
-ESP32      PCM5102A
---------------------
-GPIO21 --> DIN
-GPIO22 --> LRCK
-GPIO23 --> BCK
+ESP32-WROOM ohne PSRAM ist für die vollständige Kombination aus Mesh-Lite, Opus und A2DP nicht vorgesehen.
 
-3V3    --> VCC
-GND    --> GND
-```
+## Gemeinsames I2S-Pinning
 
-### Hinweise
+| Signal | ESP32 GPIO |
+|---|---:|
+| BCLK | GPIO27 |
+| LRCLK / WS | GPIO25 |
+| SDATA_OUT | GPIO26 |
 
-```text
-MCLK wird nicht benötigt.
+## PCM5102A
 
-Der SCK/MCLK-Pin des PCM5102A bleibt unbeschaltet.
-```
+| ESP32 | PCM5102A |
+|---|---|
+| GPIO27 | BCK |
+| GPIO25 | LCK / LRCK |
+| GPIO26 | DIN |
+| 3,3 V bzw. passende Modulversorgung | VCC |
+| GND | GND |
 
-Audioformat:
+**Der getestete PCM5102A-Aufbau benötigt keine MCLK-Verbindung. Der SCK/MCLK-Pin bleibt unbeschaltet.**
 
-```text
-48 kHz
-16 Bit
-Stereo
-```
+## ADAU1701
 
----
+| ESP32 | ADAU1701 |
+|---|---|
+| GPIO0 | MCLKI |
+| GPIO27 | BCLK |
+| GPIO25 | LRCLK |
+| GPIO26 | SDATA_IN |
+| GND | GND |
 
-## ADAU1701 Anschluss
-
-### Pinning
-
-```text
-ESP32      ADAU1701
---------------------
-GPIO21 --> SDATA_IN
-GPIO22 --> LRCLK
-GPIO23 --> BCLK
-
-3V3    --> VCC
-GND    --> GND
-```
-
-### Hinweise
-
-```text
-Der ADAU1701 kann als DSP-Stufe verwendet werden.
-
-Die Audioquelle (Snapcast oder Bluetooth)
-wird vollständig auf dem ESP32 verwaltet.
-```
-
----
+Der ESP32 arbeitet als I2S-Master und erzeugt für den ADAU1701 12,288 MHz MCLK bei 48 kHz. Die ADAU1701-PLL- und SigmaStudio-Konfiguration muss zum verwendeten Hardwareaufbau passen.
 
 ## Bluetooth
 
-Bluetooth-Gerätename:
+Der Gerätename folgt dem Schema:
 
 ```text
 Snap-Blth-XXXX
@@ -131,102 +94,74 @@ Snap-Blth-XXXX
 Beispiel:
 
 ```text
-Snap-Blth-9904
+Snap-Blth-8844
 ```
 
-Die letzten vier Zeichen entsprechen den letzten beiden Bytes der WLAN-MAC-Adresse.
-
----
+`XXXX` entspricht den letzten beiden Bytes der WLAN-STA-MAC.
 
 ## Snapcast
 
-Standardparameter:
+Der Client sendet seine WLAN-STA-MAC als Client-ID und erkennt den vom Server gelieferten CodecHeader. Unterstützt werden derzeit:
 
-```text
-Codec       : Opus
-Samplerate  : 48 kHz
-Kanäle      : Stereo
-Bitbreite   : 16 Bit
-```
+- Opus, 48 kHz, Stereo
+- PCM-Direktpfad
 
-Die Codec-Erkennung erfolgt automatisch anhand der vom Snapserver übertragenen Streaminformationen.
+Der Snap-Task läuft auf CPU 1 unterhalb der Priorität des I2S-Player-Tasks. Netzwerk-, Mesh- und Bluetooth-Systemaufgaben verbleiben überwiegend auf CPU 0.
 
----
+## Build
 
-## ESP32 Hardware
-
-### Empfohlen
-
-```text
-ESP32-WROVER
-8 MB PSRAM
-```
-
-Getestet:
-
-```text
-✓ Snapcast
-✓ Opus
-✓ Bluetooth A2DP
-✓ Mesh-Lite
-✓ PCM5102A
-✓ ADAU1701
-✓ Automatische Quellenumschaltung
-```
-
-### Nicht empfohlen
-
-```text
-ESP32 ohne PSRAM
-```
-
-Die Kombination aus
-
-- Bluetooth A2DP
-- Mesh-Lite
-- Snapcast
-- Opus-Decoding
-
-beansprucht erhebliche Speicherressourcen.
-
----
-
-## Aktueller Status
-
-```text
-✓ Snapcast stabil
-✓ Opus-Decoding stabil
-✓ Bluetooth A2DP stabil
-✓ A2DP ↔ Snapcast Umschaltung stabil
-✓ PCM5102A getestet
-✓ ADAU1701 getestet
-✓ ESP32-WROVER getestet
-```
-
----
-
-## Projektstart
-
-ESP-IDF Umgebung aktivieren:
+ESP-IDF-Terminal öffnen und im Projektverzeichnis ausführen:
 
 ```cmd
-C:\esp\v5.4.3\esp-idf\export.bat
-```
-
-Projekt bauen:
-
-```cmd
+idf.py set-target esp32
+idf.py reconfigure
 idf.py build
-```
-
-Flashen:
-
-```cmd
-idf.py -p COM5 flash
-```
-
-Flashen und Monitor starten:
-
-```cmd
 idf.py -p COM5 flash monitor
 ```
+
+Den COM-Port an die lokale Umgebung anpassen.
+
+## Konfiguration
+
+Routerdaten, Snapserver-Adresse und weitere Projektparameter werden über `menuconfig` bzw. die Projektkonfiguration gesetzt:
+
+```cmd
+idf.py menuconfig
+```
+
+Zugangsdaten dürfen nicht in Logs, Commits oder NVS-Abbildern veröffentlicht werden.
+
+## Projektstruktur
+
+```text
+components/
+  audio_i2s/          I2S-Master und Ausgabe
+  resampler/          Sample-Rate-Konvertierung
+  source_arbiter/     Quellenwahl und Audiopuffer
+main/
+  main.c              Initialisierung
+  net_mesh.c          Mesh-Lite und Netzwerk
+  snapclient_glue.c   Snapcast, Opus und Reconnect
+  a2dp_sink_glue.c    Bluetooth-A2DP
+```
+
+## Bekannte Einschränkungen
+
+- Der klassische ESP32 teilt ein 2,4-GHz-Funkmodul zwischen WLAN und Bluetooth.
+- Schwacher WLAN-RSSI, WPA3/PMF und 40-MHz-Kanalbreite können den Verbindungsaufbau erschweren.
+- Mesh-Lite-Scans können kurzfristig Funkzeit beanspruchen.
+- Ein vollständiger serverzeitbasierter Snapcast-Zeitsync ist noch nicht implementiert.
+- Das Projekt unterstützt aktuell keine Mikrofon-, Paging- oder AEC-Funktion.
+
+## Testkriterien
+
+Nach Änderungen mindestens prüfen:
+
+1. Snapcast startet und spielt mindestens zwei Minuten ohne Watchdog.
+2. `decode_errors=0` und im stabilen Betrieb `dropped=0`.
+3. A2DP startet erst bei aktivem Audiostream.
+4. Wechsel Snapcast -> A2DP -> Snapcast mindestens zehnmal wiederholen.
+5. Bluetooth trennen, während A2DP spielt.
+6. Snapserver während aktiver A2DP-Wiedergabe stoppen und neu starten.
+7. WLAN-Reconnect prüfen.
+8. PCM5102A und ADAU1701 getrennt testen.
