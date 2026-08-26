@@ -20,13 +20,12 @@
 #include "source_arbiter.h"
 #include "net_mesh.h"
 #include "snapclient_glue.h"
-#include "a2dp_sink_glue.h"
 
 static const char *TAG = "app";
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "boot: ESP32 mesh-lite snapclient + a2dp");
+    ESP_LOGI(TAG, "boot: ESP32 mesh-lite snapclient");
 
     /* 1) NVS (WLAN-Kalibrierung, Mesh-/BT-Config) */
     esp_err_t err = nvs_flash_init();
@@ -46,7 +45,7 @@ void app_main(void)
      *    Pause-Callback verdrahten: bei A2DP wird der Snapclient-Socket
      *    geschlossen (Koexistenz), bei Rueckkehr reconnectet er. */
     ESP_ERROR_CHECK(arbiter_init(PRIO_A2DP_FIRST));
-    arbiter_register_snap_pause_cb(snapclient_pause);
+    //////arbiter_register_snap_pause_cb(snapclient_pause);
 
     /* 5) Mesh-Lite starten (WLAN self-organizing/-healing) */
     ESP_ERROR_CHECK(net_mesh_start());
@@ -55,7 +54,7 @@ void app_main(void)
      *    Hinweis Koexistenz: A2DP + aktives WLAN-Streaming stoeren sich.
      *    Der Arbiter pausiert daher den Snapclient, sobald A2DP verbindet. */
     //ESP_ERROR_CHECK(snapclient_start(CONFIG_SNAPSERVER_HOST, CONFIG_SNAPSERVER_PORT));   /* verbindet sich mit Snapserver  */
-    ESP_ERROR_CHECK(a2dp_sink_start());    /* wartet auf BT-Quelle           */
+    ////ESP_ERROR_CHECK(a2dp_sink_start());    /* wartet auf BT-Quelle           */
 
     ESP_LOGI(TAG, "init complete");
 }

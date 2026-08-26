@@ -3,7 +3,6 @@ idf_component_register(
         "main.c"
         "net_mesh.c"
         "snapclient_glue.c"
-        "a2dp_sink_glue.c"
 
     INCLUDE_DIRS
         "."
@@ -16,7 +15,6 @@ idf_component_register(
         esp_netif
         esp_event
         esp_timer
-        bt
         mesh_lite
         espressif__iot_bridge
         78__esp-opus
