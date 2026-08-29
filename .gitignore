@@ -18,3 +18,4 @@ __pycache__/
 
 # Serial monitor logs
 *.log
+dependencies.lock
