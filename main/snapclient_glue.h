@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
 #ifdef __cplusplus
 extern "C" {
@@ -14,6 +15,9 @@ esp_err_t snapclient_start(const char *host, uint16_t port);
  *   pause=false -> Reconnect zum Snapserver
  */
 void snapclient_pause(bool pause);
+
+/** Netzwerk ist wieder verfuegbar; laufenden Reconnect sofort fortsetzen. */
+void snapclient_network_available(void);
 
 #ifdef __cplusplus
 }

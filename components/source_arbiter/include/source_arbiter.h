@@ -1,59 +1,120 @@
 /**
  * @file  source_arbiter.h
- * @brief Quellenauswahl + automatische Umschaltung Snapcast <-> A2DP.
+ * @brief Quellenauswahl, automatische Umschaltung und Frequenzweiche.
  *
- * Kernregel: Es streamt immer nur EINE Quelle (WLAN/BT teilen sich EIN
- * Funkmodul). Beim Wechsel auf A2DP wird der Snapclient-Socket pausiert,
- * damit die WLAN-Airtime frei wird. Umschaltung immer ueber Fade/Mute,
- * der I2S-Takt laeuft dabei durchgehend weiter (kein PLL-Re-Lock am ADAU).
+ * Datenpfad:
+ *
+ *   Snapcast oder Bluetooth A2DP
+ *       -> Source-Arbiter
+ *       -> Stereo zu Mono
+ *       -> Linkwitz-Riley-Frequenzweiche
+ *       -> links: Subwoofer
+ *       -> rechts: Breitbandlautsprecher
+ *       -> I2S
+ *
+ * Es streamt immer nur eine Quelle.
+ *
+ * Beim Wechsel auf A2DP wird der Snapclient-Socket pausiert.
+ * Beim Verlassen von A2DP wird der Snapclient wieder freigegeben.
+ *
+ * Der I2S-Takt läuft während der Quellenumschaltung weiter.
  */
+
 #pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
+
 #include "esp_err.h"
+
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef enum {
+
+typedef enum
+{
     SRC_NONE = 0,
     SRC_SNAPCAST,
-    SRC_A2DP,
+    SRC_A2DP
 } audio_src_t;
 
-/** Prioritaetsstrategie fuer die Arbitrierung. */
-typedef enum {
-    PRIO_A2DP_FIRST = 0,   /* A2DP uebersteuert Snapcast, sobald verbunden */
-    PRIO_SNAPCAST_FIRST,   /* Snapcast hat Vorrang, A2DP nur als Fallback  */
+
+typedef enum
+{
+    PRIO_A2DP_FIRST = 0,
+    PRIO_SNAPCAST_FIRST
 } audio_prio_t;
 
+
 /**
- * Callback, mit dem der Arbiter die WLAN-Quelle (Snapclient) bei aktivem
- * A2DP pausiert und danach wieder freigibt. Vom App-Layer registriert.
- * pause=true -> Socket schliessen (Airtime frei); pause=false -> reconnect.
+ * Callback zur Pause- und Resume-Steuerung des Snapclients.
+ *
+ * pause=true:
+ *   Snapclient-Socket schließen.
+ *
+ * pause=false:
+ *   Verbindung zum Snapserver erneut aufbauen.
  */
 typedef void (*arbiter_snap_pause_cb_t)(bool pause);
 
-/** Arbiter + Ringpuffer + Mixer-Task starten. */
-esp_err_t arbiter_init(audio_prio_t prio);
-
-/** Pause/Resume-Callback fuer die Snapcast-Quelle registrieren. */
-void arbiter_register_snap_pause_cb(arbiter_snap_pause_cb_t cb);
-
-/** Statusmeldungen von den Quellen (thread-safe). */
-void arbiter_set_snapcast_active(bool active);
-void arbiter_set_a2dp_connected(bool connected);
 
 /**
- * PCM von einer Quelle einspeisen. Nur Daten der aktiven Quelle landen
- * im Ringpuffer; Daten der inaktiven Quelle werden verworfen.
+ * Source-Arbiter, Ringpuffer, Player-Task und Frequenzweiche starten.
  */
-size_t arbiter_feed(audio_src_t from, const void *pcm, size_t bytes);
+esp_err_t arbiter_init(audio_prio_t prio);
 
-/** Aktuell aktive Quelle abfragen (Logging/Diagnose). */
+
+/**
+ * Pause- und Resume-Callback des Snapclients registrieren.
+ */
+void arbiter_register_snap_pause_cb(
+    arbiter_snap_pause_cb_t cb);
+
+
+/**
+ * Snapcast-Status setzen.
+ */
+void arbiter_set_snapcast_active(bool active);
+
+
+/**
+ * A2DP-Audiostream-Status setzen.
+ *
+ * Der Parameter bezeichnet den aktiven Audiostream und nicht nur
+ * den Zustand der Bluetooth-Verbindung.
+ */
+void arbiter_set_a2dp_connected(bool connected);
+
+
+/**
+ * PCM-Daten einer Quelle einspeisen.
+ *
+ * Erwartetes Format:
+ *
+ *   48 kHz
+ *   16 Bit signed PCM
+ *   Stereo
+ *   interleaved
+ *
+ * Nur Daten der aktiven Quelle werden übernommen.
+ *
+ * Rückgabewert:
+ *
+ *   Anzahl der in den Ringpuffer übernommenen Bytes.
+ */
+size_t arbiter_feed(
+    audio_src_t from,
+    const void *pcm,
+    size_t bytes);
+
+
+/**
+ * Aktuell ausgewählte Audioquelle abfragen.
+ */
 audio_src_t arbiter_current(void);
+
 
 #ifdef __cplusplus
 }
