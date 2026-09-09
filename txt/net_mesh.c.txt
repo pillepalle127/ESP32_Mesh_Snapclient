@@ -1,12 +1,6 @@
 /**
- * @file net_mesh.c
- * @brief Routerless ESP-Mesh-Lite child networking for the Snapclient.
- *
- * The node is prohibited from becoming level 1. It discovers a parent with
- * the configured Mesh ID, SSID, password and channel, receives a parent-side
- * IP address, restores the STA netif as default route and then starts the
- * Snapcast client. The local SoftAP remains available for downstream
- * Mesh-Lite children and ordinary WLAN stations.
+ * @file  net_mesh.c
+ * @brief Autarker ESP-Mesh-Lite Snapclient als reiner Child-Knoten.
  */
 #include "net_mesh.h"
 #include "snapclient_glue.h"
@@ -56,7 +50,7 @@ static void network_recovery_task(void *arg)
         }
 
         ESP_LOGW(TAG,
-                 "Snapserver is unreachable; requesting Mesh-Lite STA reassociation");
+                 "Repeated Snapserver connection failures; restarting STA link");
 
         const esp_err_t err = esp_wifi_disconnect();
         if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
@@ -66,7 +60,7 @@ static void network_recovery_task(void *arg)
         }
 
         /*
-         * Mesh-Lite owns the STA association and initiates its normal reconnect
+         * Mesh-Lite owns the STA association and starts its normal reconnect
          * sequence after the disconnect event. A short delay prevents a
          * pending TCP retry from racing the Wi-Fi state transition.
          */

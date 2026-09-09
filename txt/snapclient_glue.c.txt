@@ -1,19 +1,11 @@
 /**
  * @file snapclient_glue.c
- * @brief Snapcast stream client with Opus decoding, watchdog and recovery.
+ * @brief Minimal Snapcast TCP client with PCM and Opus decoding.
  *
- * Target: ESP-IDF 5.4.3 on ESP32 with internal-RAM Opus state.
- *
- * Responsibilities:
- * - connect to the configured Snapserver on TCP port 1704,
- * - exchange Hello and periodic Time messages,
- * - receive PCM or Opus WireChunk messages,
- * - decode Opus to stereo PCM for the source arbiter,
- * - detect stale connections and reconnect,
- * - request asynchronous network recovery after repeated connect failures.
- *
- * The server stream is currently mono. The decoder intentionally produces
- * two PCM channels so the downstream stereo I2S/audio path remains unchanged.
+ * Target: ESP-IDF 5.4.3.
+ * Snapcast becomes active only after a decoder exists and the first PCM block
+ * has been decoded. Opus state uses explicitly allocated internal 8-bit RAM,
+ * which makes allocation failures visible and avoids hidden malloc behavior.
  */
 #include "snapclient_glue.h"
 #include "source_arbiter.h"
@@ -95,12 +87,12 @@ typedef enum {
 /*
  * Connect timeout.
  *
- * A blocking connect() can wait for the lwIP ARP/SYN timeout before it reports
- * EHOSTUNREACH. This can happen whenever
+ * A blocking connect() waits for the lwIP ARP/SYN timeout before it reports
+ * EHOSTUNREACH, which took roughly 18-20 s per attempt. That happens whenever
  * the route to the server is temporarily gone, for example while the iot
  * bridge reconfigures its netifs after a station joined the local SoftAP.
- * A non-blocking connect plus select() bounds each attempt to
- * SNAP_CONNECT_TIMEOUT_MS and keeps the retry cadence predictable.
+ * With a non-blocking connect plus select() a dead route is detected within
+ * SNAP_CONNECT_TIMEOUT_MS, so the retry cadence stays predictable.
  */
 #define SNAP_CONNECT_TIMEOUT_MS    8000U
 #define SNAP_CONNECT_FAILURES_BEFORE_RECOVERY  1U

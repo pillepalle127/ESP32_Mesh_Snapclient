@@ -3,4 +3,5 @@ idf_component_register(
                 "resampler.c"
     INCLUDE_DIRS "include"
     REQUIRES    audio_i2s esp_ringbuf
+	PRIV_REQUIRES esp_timer
 )

@@ -1,17 +1,5 @@
 menu "Snapclient Mesh Project Configuration"
 
-    config ROUTER_SSID
-        string "Router SSID"
-        default "myssid"
-        help
-            SSID des Uplink-Routers fuer den Mesh-Root-Knoten.
-
-    config ROUTER_PASSWORD
-        string "Router password"
-        default "mypassword"
-        help
-            WPA2-Passwort des Uplink-Routers.
-
     config MESH_SOFTAP_SSID_PREFIX
         string "Mesh SoftAP SSID prefix"
         default "SnapMesh"
@@ -20,10 +8,17 @@ menu "Snapclient Mesh Project Configuration"
 
     config MESH_SOFTAP_PASSWORD
         string "Mesh SoftAP password"
-        default "meshpassword"
+        default "criticalmass"
         help
             Passwort fuer die Inter-Node-SoftAP-Verbindungen (min. 8 Zeichen).
-
+	config MESH_CHANNEL
+		int "Mesh Wi-Fi channel"
+		default 6
+		range 1 13
+		help
+			Fester WLAN-Kanal des autarken Mesh-Netzes.
+			Dieser Wert muss auf Root und allen Clients identisch sein.
+			
     config SNAPSERVER_HOST
         string "Snapserver hostname/IP"
         default "192.168.1.10"

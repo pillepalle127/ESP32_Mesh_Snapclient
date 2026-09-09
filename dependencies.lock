@@ -1,0 +1,79 @@
+dependencies:
+  78/esp-opus:
+    component_hash: 8182b733f071d7bfe1e837f4c9f8649a63e4c937177f089e65772880c02f2e17
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.5
+  espressif/cmake_utilities:
+    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.5.3
+  espressif/esp_modem:
+    component_hash: 71c9f54fc512c60d93ea9763377ceb1d5b575a4616f3f3344440b97e2a38da29
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.4.3
+  espressif/iot_bridge:
+    dependencies: []
+    source:
+      path: C:\Users\Stefan\Documents\Elektronik\ESP\ESP32_Mesh_Snapclient\components\espressif__iot_bridge
+      type: local
+    version: 1.0.1
+  espressif/mesh_lite:
+    component_hash: 3a19dbc45a795d9625ac8e3bc54189c51c36a72b5c12ba3ba8081ed71a0bbfac
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/iot_bridge
+      registry_url: https://components.espressif.com
+      require: private
+      version: 1.0.1
+    - name: espressif/qrcode
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^0.1.0
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.2
+  espressif/qrcode:
+    component_hash: 3b493771bc5d6ad30cbf87c25bf784aada8a08c941504355b55d6b75518ed7bc
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.1.0~2
+  idf:
+    source:
+      type: idf
+    version: 5.4.3
+direct_dependencies:
+- 78/esp-opus
+- espressif/cmake_utilities
+- espressif/esp_modem
+- espressif/mesh_lite
+- idf
+manifest_hash: 374661f92886f7f7b7c5b7b60c6fe9017eddbe22338b98a467c4f572ff4dba0d
+target: esp32
+version: 2.0.0
