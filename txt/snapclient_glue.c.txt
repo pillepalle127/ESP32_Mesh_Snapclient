@@ -21,11 +21,13 @@
 #include "opus.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netdb.h>
 #include <unistd.h>
 
@@ -84,6 +86,8 @@ typedef struct __attribute__((packed)) {
  * ------------------------------------------------------------------------- */
 
 #define EVT_RESUME                  BIT0
+#define EVT_NETWORK_AVAILABLE       BIT1
+#define EVT_STATE_CHANGED           BIT2
 
 #define SNAP_SAMPLE_RATE            48000
 #define SNAP_CHANNELS               2
@@ -108,7 +112,8 @@ typedef struct __attribute__((packed)) {
 #define SNAP_TASK_PRIORITY          5
 #define SNAP_TASK_CORE              1
 
-#define SNAP_CONNECT_RETRY_MS       2000
+#define SNAP_CONNECT_RETRY_MS       500
+#define SNAP_CONNECT_TIMEOUT_MS     1500
 #define SNAP_RECONNECT_DELAY_MS     1000
 #define SNAP_STATS_INTERVAL_US      5000000LL
 
@@ -121,6 +126,7 @@ static int s_sock = -1;
 
 static volatile bool s_paused = false;
 static volatile bool s_run = true;
+static volatile bool s_network_available = false;
 
 static bool s_task_started = false;
 
@@ -272,92 +278,141 @@ static int read_full(
  */
 static int tcp_connect(void)
 {
+    if (!s_network_available || s_paused || !s_run) {
+        errno = ENETDOWN;
+        return -1;
+    }
+
     struct addrinfo hints = {
         .ai_family = AF_INET,
         .ai_socktype = SOCK_STREAM,
     };
-
     struct addrinfo *result = NULL;
-
     char port_text[8] = {0};
 
-    int port_length = snprintf(
-        port_text,
-        sizeof(port_text),
-        "%u",
-        (unsigned)s_port);
-
-    if (port_length <= 0 ||
-        port_length >= (int)sizeof(port_text)) {
-
-        ESP_LOGE(
-            TAG,
-            "Snapserver-Port konnte nicht formatiert werden");
-
+    int port_length = snprintf(port_text,
+                               sizeof(port_text),
+                               "%u",
+                               (unsigned)s_port);
+    if (port_length <= 0 || port_length >= (int)sizeof(port_text)) {
+        ESP_LOGE(TAG, "Snapserver-Port konnte nicht formatiert werden");
         return -1;
     }
 
-    int gai_result = getaddrinfo(
-        s_host,
-        port_text,
-        &hints,
-        &result);
-
-    if (gai_result != 0 ||
-        result == NULL) {
-
-        ESP_LOGW(
-            TAG,
-            "getaddrinfo fehlgeschlagen fuer %s",
-            s_host);
-
+    int gai_result = getaddrinfo(s_host, port_text, &hints, &result);
+    if (gai_result != 0 || result == NULL) {
+        ESP_LOGW(TAG, "getaddrinfo fehlgeschlagen fuer %s", s_host);
         return -1;
     }
 
-    int socket_fd = socket(
-        result->ai_family,
-        result->ai_socktype,
-        result->ai_protocol);
-
+    int socket_fd = socket(result->ai_family,
+                           result->ai_socktype,
+                           result->ai_protocol);
     if (socket_fd < 0) {
-        ESP_LOGW(
-            TAG,
-            "socket() fehlgeschlagen, errno=%d",
-            errno);
-
+        ESP_LOGW(TAG, "socket() fehlgeschlagen, errno=%d", errno);
         freeaddrinfo(result);
         return -1;
     }
 
-    if (connect(
-            socket_fd,
-            result->ai_addr,
-            result->ai_addrlen) != 0) {
-
-        ESP_LOGW(
-            TAG,
-            "connect() zu %s:%u fehlgeschlagen (errno=%d)",
-            s_host,
-            (unsigned)s_port,
-            errno);
-
+    int original_flags = fcntl(socket_fd, F_GETFL, 0);
+    if (original_flags < 0 ||
+        fcntl(socket_fd, F_SETFL, original_flags | O_NONBLOCK) < 0) {
+        ESP_LOGW(TAG, "Socket konnte nicht auf nonblocking gesetzt werden, errno=%d", errno);
         close(socket_fd);
         freeaddrinfo(result);
-
         return -1;
+    }
+
+    int connect_result = connect(socket_fd,
+                                 result->ai_addr,
+                                 result->ai_addrlen);
+    if (connect_result != 0 && errno != EINPROGRESS) {
+        ESP_LOGW(TAG,
+                 "connect() zu %s:%u sofort fehlgeschlagen (errno=%d)",
+                 s_host,
+                 (unsigned)s_port,
+                 errno);
+        close(socket_fd);
+        freeaddrinfo(result);
+        return -1;
+    }
+
+    if (connect_result != 0) {
+        fd_set write_set;
+        fd_set error_set;
+        FD_ZERO(&write_set);
+        FD_ZERO(&error_set);
+        FD_SET(socket_fd, &write_set);
+        FD_SET(socket_fd, &error_set);
+
+        struct timeval timeout = {
+            .tv_sec = SNAP_CONNECT_TIMEOUT_MS / 1000,
+            .tv_usec = (SNAP_CONNECT_TIMEOUT_MS % 1000) * 1000,
+        };
+
+        int select_result = select(socket_fd + 1,
+                                   NULL,
+                                   &write_set,
+                                   &error_set,
+                                   &timeout);
+        if (select_result <= 0) {
+            int saved_errno = select_result == 0 ? ETIMEDOUT : errno;
+            ESP_LOGW(TAG,
+                     "TCP-Verbindungsaufbau zu %s:%u abgebrochen (%s, errno=%d)",
+                     s_host,
+                     (unsigned)s_port,
+                     select_result == 0 ? "Timeout" : "select-Fehler",
+                     saved_errno);
+            close(socket_fd);
+            freeaddrinfo(result);
+            errno = saved_errno;
+            return -1;
+        }
+
+        int socket_error = 0;
+        socklen_t error_length = sizeof(socket_error);
+        if (getsockopt(socket_fd,
+                       SOL_SOCKET,
+                       SO_ERROR,
+                       &socket_error,
+                       &error_length) != 0 ||
+            socket_error != 0) {
+            if (socket_error == 0) {
+                socket_error = errno;
+            }
+            ESP_LOGW(TAG,
+                     "TCP-Verbindungsaufbau zu %s:%u fehlgeschlagen (errno=%d)",
+                     s_host,
+                     (unsigned)s_port,
+                     socket_error);
+            close(socket_fd);
+            freeaddrinfo(result);
+            errno = socket_error;
+            return -1;
+        }
     }
 
     freeaddrinfo(result);
 
-    ESP_LOGI(
-        TAG,
-        "verbunden mit Snapserver %s:%u",
-        s_host,
-        (unsigned)s_port);
+    if (!s_network_available || s_paused || !s_run) {
+        shutdown(socket_fd, SHUT_RDWR);
+        close(socket_fd);
+        errno = ENETDOWN;
+        return -1;
+    }
 
+    if (fcntl(socket_fd, F_SETFL, original_flags) < 0) {
+        ESP_LOGW(TAG, "Socket konnte nicht auf blocking zurueckgesetzt werden, errno=%d", errno);
+        close(socket_fd);
+        return -1;
+    }
+
+    ESP_LOGI(TAG,
+             "verbunden mit Snapserver %s:%u",
+             s_host,
+             (unsigned)s_port);
     return socket_fd;
 }
-
 
 /* -------------------------------------------------------------------------
  * Snapcast-Hello
@@ -1168,118 +1223,85 @@ static void connection_loop(int socket_fd)
  * Snapclient-Task
  * ------------------------------------------------------------------------- */
 
+static void wait_for_reconnect_condition(TickType_t timeout_ticks)
+{
+    if (s_evt == NULL) {
+        vTaskDelay(timeout_ticks);
+        return;
+    }
+
+    xEventGroupWaitBits(s_evt,
+                        EVT_RESUME | EVT_NETWORK_AVAILABLE | EVT_STATE_CHANGED,
+                        pdTRUE,
+                        pdFALSE,
+                        timeout_ticks);
+}
+
 static void snap_task(void *argument)
 {
     (void)argument;
 
     while (s_run) {
-        if (s_paused) {
-            xEventGroupWaitBits(
-                s_evt,
-                EVT_RESUME,
-                pdTRUE,
-                pdTRUE,
-                portMAX_DELAY);
-
-            if (!s_run) {
-                break;
-            }
-
-            /*
-             * Ein veraltetes Resume-Event darf keinen Verbindungsaufbau
-             * starten, solange der Pausezustand weiterhin aktiv ist.
-             */
+        if (s_paused || !s_network_available) {
+            EventBits_t required = EVT_NETWORK_AVAILABLE;
             if (s_paused) {
-                continue;
-            }
-        }
-
-        int socket_fd =
-            tcp_connect();
-
-        if (socket_fd < 0) {
-            if (!s_paused) {
-                vTaskDelay(
-                    pdMS_TO_TICKS(
-                        SNAP_CONNECT_RETRY_MS));
+                required |= EVT_RESUME;
             }
 
+            xEventGroupWaitBits(s_evt,
+                                required,
+                                pdFALSE,
+                                pdTRUE,
+                                portMAX_DELAY);
             continue;
         }
 
-        /*
-         * A2DP kann waehrend des blockierenden connect()-Aufrufs
-         * aktiv geworden sein.
-         *
-         * In diesem Fall den neuen Socket sofort schliessen und
-         * kein Snapcast-Hello senden.
-         */
-        if (s_paused) {
-            shutdown(
-                socket_fd,
-                SHUT_RDWR);
+        int socket_fd = tcp_connect();
+        if (socket_fd < 0) {
+            if (s_run && !s_paused && s_network_available) {
+                wait_for_reconnect_condition(
+                    pdMS_TO_TICKS(SNAP_CONNECT_RETRY_MS));
+            }
+            continue;
+        }
 
+        if (s_paused || !s_network_available) {
+            shutdown(socket_fd, SHUT_RDWR);
             close(socket_fd);
             continue;
         }
 
         s_sock = socket_fd;
-
-        memset(
-            s_codec,
-            0,
-            sizeof(s_codec));
-
+        memset(s_codec, 0, sizeof(s_codec));
         opus_decoder_reset();
         reset_stream_stats();
 
         if (send_hello(socket_fd) == 0) {
-            connection_loop(
-                socket_fd);
+            connection_loop(socket_fd);
         }
 
-        /*
-         * Nur der Snapclient-Task schliesst den Socket endgueltig.
-         * snapclient_pause() verwendet lediglich shutdown().
-         */
-        shutdown(
-            socket_fd,
-            SHUT_RDWR);
-
-        close(
-            socket_fd);
-
+        shutdown(socket_fd, SHUT_RDWR);
+        close(socket_fd);
         if (s_sock == socket_fd) {
             s_sock = -1;
         }
-
         opus_decoder_reset();
 
-        if (!s_paused &&
-            s_run) {
-
-            ESP_LOGI(
-                TAG,
-                "Verbindung verloren, Reconnect in %d ms",
-                SNAP_RECONNECT_DELAY_MS);
-
-            vTaskDelay(
-                pdMS_TO_TICKS(
-                    SNAP_RECONNECT_DELAY_MS));
+        if (!s_paused && s_run && s_network_available) {
+            ESP_LOGI(TAG,
+                     "Verbindung verloren, Reconnect in %d ms",
+                     SNAP_RECONNECT_DELAY_MS);
+            wait_for_reconnect_condition(
+                pdMS_TO_TICKS(SNAP_RECONNECT_DELAY_MS));
         }
     }
 
-    arbiter_set_snapcast_active(
-        false);
-
+    arbiter_set_snapcast_active(false);
     opus_decoder_reset();
-
     s_sock = -1;
     s_task_started = false;
-
     vTaskDelete(NULL);
 }
-
 
 /* -------------------------------------------------------------------------
  * Oeffentliche API
@@ -1288,6 +1310,35 @@ static void snap_task(void *argument)
 /**
  * @brief Snapcast wegen eines aktiven A2DP-Audiostreams pausieren.
  */
+void snapclient_set_network_available(bool available)
+{
+    if (s_network_available == available) {
+        return;
+    }
+
+    s_network_available = available;
+
+    if (available) {
+        ESP_LOGI(TAG, "NET UP: Snapclient-Reconnect sofort freigegeben");
+        if (s_evt != NULL) {
+            xEventGroupSetBits(s_evt,
+                               EVT_NETWORK_AVAILABLE | EVT_STATE_CHANGED);
+        }
+        return;
+    }
+
+    ESP_LOGW(TAG, "NET DOWN: laufende Snapserver-Verbindung wird abgebrochen");
+    if (s_evt != NULL) {
+        xEventGroupClearBits(s_evt, EVT_NETWORK_AVAILABLE);
+        xEventGroupSetBits(s_evt, EVT_STATE_CHANGED);
+    }
+
+    int socket_fd = s_sock;
+    if (socket_fd >= 0) {
+        shutdown(socket_fd, SHUT_RDWR);
+    }
+}
+
 void snapclient_pause(bool pause)
 {
     if (pause) {
@@ -1333,7 +1384,7 @@ void snapclient_pause(bool pause)
     if (s_evt != NULL) {
         xEventGroupSetBits(
             s_evt,
-            EVT_RESUME);
+            EVT_RESUME | EVT_STATE_CHANGED);
     }
 }
 
@@ -1387,6 +1438,12 @@ esp_err_t snapclient_start(
     s_run = true;
     s_paused = false;
     s_task_started = true;
+
+    if (s_network_available) {
+        xEventGroupSetBits(s_evt, EVT_NETWORK_AVAILABLE);
+    } else {
+        xEventGroupClearBits(s_evt, EVT_NETWORK_AVAILABLE);
+    }
     s_sock = -1;
 
     memset(

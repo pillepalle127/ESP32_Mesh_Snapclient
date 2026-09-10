@@ -1,232 +1,145 @@
 # ESP32 Mesh Snapclient
 
-ESP32-basierter Snapcast-Client mit Bluetooth A2DP, automatischer Quellenumschaltung und Unterstützung für PCM5102A sowie ADAU1701.
+ESP32-basierter Snapcast-Client fuer ein autonomes ESP-Mesh-Lite-Netz ohne externen Router. Der Client empfaengt Opus- oder PCM-Audio vom ESP32-S3-Snapserver und kann alternativ als Bluetooth-A2DP-Sink arbeiten. Die Quellenumschaltung erfolgt automatisch.
 
-## Features
-
-- Snapcast Client (Opus)
-- ESP-Mesh-Lite
-- Bluetooth A2DP Sink
-- Automatische Quellenumschaltung
-- 48 kHz Stereo Audio Pipeline
-- PCM5102A Unterstützung
-- ADAU1701 Unterstützung
-- ESP32-WROVER empfohlen
-
----
-
-## Audio-Pipeline
+## Architektur
 
 ```text
-Snapcast (Opus)
-          │
-          ▼
-Bluetooth A2DP
-          │
-          ▼
-     Source Arbiter
-          │
-          ▼
-          I2S
-          │
- ┌────────┴────────┐
- │                 │
- ▼                 ▼
-PCM5102A       ADAU1701
+ESP32-S3 Snapserver
+  Mesh-Lite Root, Level 1
+  SoftAP/Gateway 192.168.5.1
+  Snapcast TCP 1704
+           |
+           | ESP-Mesh-Lite, No-Router-Modus
+           v
+ESP32-WROVER Snapclient
+  Non-Root, Level 2 oder hoeher
+  DHCP-Adresse vom Parent
+           |
+           +--> Snapcast Opus/PCM --+
+           |                        |
+           +--> Bluetooth A2DP -----+--> Source-Arbiter --> I2S
 ```
 
----
+Der Snapclient darf nicht Root beziehungsweise Level 1 werden. Er sucht selbststaendig einen passenden Mesh-Lite-Parent mit identischer Mesh-ID und identischem Mesh-Passwort. Eine externe Router-SSID wird nicht verwendet.
 
-## Quellenpriorität
+## Funktionen
+
+- ESP-Mesh-Lite 1.0.2 im autonomen No-Router-Betrieb
+- ESP32-S3-Snapserver als einziger Root auf Level 1
+- ESP32-Snapclient als Non-Root auf Level 2 oder hoeher
+- Snapcast Protocol Version 2
+- automatische Codec-Erkennung fuer Opus und PCM
+- Opus-Dekodierung mit 48 kHz, 16 Bit und Stereo-Ausgabe
+- Bluetooth-A2DP-Sink ueber Classic Bluetooth beziehungsweise BR/EDR
+- SBC-Resampling auf 48 kHz
+- automatische Quellenumschaltung zwischen Snapcast und A2DP
+- unterbrechbarer, nichtblockierender TCP-Verbindungsaufbau
+- Connect-Timeout von 1,5 Sekunden
+- unmittelbare Reconnect-Freigabe nach erneutem Mesh-IP-Bezug
+- sofortiger Socket-Abbruch bei Mesh-/IP-Verlust
+- PSRAM-Nutzung fuer den Opus-PCM-Puffer
+
+## Quellenprioritaet
 
 ```text
-Bluetooth A2DP
-        ↓
-     Snapcast
-        ↓
-      Stille
+Aktiver A2DP-Audiostream
+          |
+          v
+       Snapcast
+          |
+          v
+        Stille
 ```
 
-Verhalten:
+Eine reine Bluetooth-Verbindung schaltet die Quelle noch nicht um. Erst `ESP_A2D_AUDIO_STATE_STARTED` aktiviert A2DP. Dabei wird der Snapserver-Socket geschlossen. Nach Stopp, Pause oder Trennung des A2DP-Streams wird Snapcast automatisch wieder freigegeben und verbunden.
 
-```text
-A2DP Audio STARTED
-    → Snapcast wird pausiert
+## Netzwerk und Reconnect
 
-A2DP Audio STOPPED
-    → Snapcast wird automatisch wieder verbunden
+Der TCP-Snapclient wird nicht direkt in `app_main()` gestartet. `net_mesh.c` startet ihn erst nach `IP_EVENT_STA_GOT_IP`.
+
+Bei einem Mesh-Abbruch gilt:
+
+1. `WIFI_EVENT_STA_DISCONNECTED` meldet `NET DOWN` und unterbricht den laufenden Socket per `shutdown()`.
+2. Solange keine gueltige Mesh-IP vorhanden ist, wird kein TCP-Verbindungsversuch gestartet.
+3. Nach `IP_EVENT_STA_GOT_IP` meldet das Mesh `NET UP` und gibt den Reconnect sofort frei.
+4. `connect()` arbeitet nichtblockierend und wird durch `select()` auf 1,5 Sekunden begrenzt.
+
+Damit wird das zuvor beobachtete Blockieren von `connect()` ueber etwa 60 Sekunden vermieden.
+
+## Projektkonfiguration
+
+Die verbindlichen Projektwerte werden in `sdkconfig.defaults` gepflegt. Die vollstaendige `sdkconfig` wird von ESP-IDF erzeugt und sollte nicht manuell ausgeduennt werden.
+
+```ini
+CONFIG_IDF_TARGET="esp32"
+CONFIG_MESH_SOFTAP_SSID_PREFIX="SnapMesh_sr"
+CONFIG_MESH_SOFTAP_PASSWORD="<mesh-password>"
+CONFIG_SNAPSERVER_HOST="192.168.5.1"
+CONFIG_SNAPSERVER_PORT=1704
+CONFIG_JOIN_MESH_WITHOUT_CONFIGURED_WIFI_INFO=y
+CONFIG_JOIN_MESH_IGNORE_ROUTER_STATUS=y
+
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=y
+CONFIG_BT_CLASSIC_ENABLED=y
+CONFIG_BT_A2DP_ENABLE=y
+CONFIG_BT_AVRCP_ENABLED=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y
+CONFIG_BTDM_CTRL_MODE_BTDM=n
+CONFIG_BT_BLE_ENABLED=n
 ```
 
-Es wird immer nur eine Audioquelle gleichzeitig ausgegeben.
+Passwoerter und andere projektspezifische Zugangsdaten sind vor einer oeffentlichen Veroeffentlichung zu ersetzen beziehungsweise aus dem Repository zu entfernen.
 
----
+## Audio
 
-## PCM5102A Anschluss
+- interne Verarbeitung: 48 kHz, 16 Bit, Stereo
+- Snapcast: Opus oder PCM, automatische Erkennung aus dem CodecHeader
+- A2DP: SBC-Eingang mit Resampling auf 48 kHz
+- Ausgabe: gemeinsamer I2S-Masterpfad ueber den Source-Arbiter
 
-### Pinning
+Die verbindliche GPIO-Belegung wird im Modul `audio_i2s` gepflegt. Die README enthaelt bewusst keine separate Pin-Tabelle, damit Dokumentation und Firmware nicht auseinanderlaufen. Der aktuelle Laufzeitlog muss die tatsaechlich verwendeten I2S-Pins und den MCLK-Status ausgeben.
 
-```text
-ESP32      PCM5102A
---------------------
-GPIO21 --> DIN
-GPIO22 --> LRCK
-GPIO23 --> BCK
+## Hardware
 
-3V3    --> VCC
-GND    --> GND
-```
+Empfohlen und getestet ist ein klassischer ESP32-WROVER mit PSRAM. Beim verwendeten Modul wurden 8 MB PSRAM erkannt; aufgrund des Adressraums des klassischen ESP32 werden davon 4 MB direkt in den Heap eingeblendet. Der Opus-Puffer wird bevorzugt im PSRAM angelegt.
 
-### Hinweise
+Bluetooth A2DP benoetigt Bluetooth Classic. ESP32-S3-basierte Clients sind fuer diesen A2DP-Sink daher nicht geeignet; der ESP32-S3 wird in diesem Projekt als Snapserver und Mesh-Root eingesetzt.
 
-```text
-MCLK wird nicht benötigt.
+## Verifizierter Stand vom 10. September 2026
 
-Der SCK/MCLK-Pin des PCM5102A bleibt unbeschaltet.
-```
+Folgende Funktionen wurden im Laufzeitlog erfolgreich nachgewiesen:
 
-Audioformat:
+- Mesh-Parent `SnapMesh_sr` gefunden
+- Client als Level 2 verbunden
+- DHCP-Adresse `192.168.5.2` mit Gateway `192.168.5.1` erhalten
+- Snapserver-Verbindung auf `192.168.5.1:1704` aufgebaut
+- Snapcast-Hello und Opus-CodecHeader verarbeitet
+- Opus-Dekodierung ohne Decode-Fehler oder verworfene Bytes
+- Umschaltung Snapcast zu A2DP bei Audiostart
+- Pause des Snapserver-Sockets waehrend A2DP
+- Rueckschaltung und Reconnect zu Snapcast nach A2DP-Ende
+- Mesh-Reconnect nach WLAN-Abbruch
+- TCP-Reconnect gegen lang blockierendes `connect()` ueberarbeitet
 
-```text
-48 kHz
-16 Bit
-Stereo
-```
+Der neue zeitlich begrenzte TCP-Reconnect muss noch gezielt durch wiederholte Server-, Root- und Funkunterbrechungen belastungsgetestet werden. Ein einzelner erfolgreicher Lauf gilt nicht als abschliessender Stabilitaetsnachweis.
 
----
+## Bekannte Punkte
 
-## ADAU1701 Anschluss
+- Der WLAN-Abbruch mit `WIFI_REASON_SA_QUERY_TIMEOUT` beziehungsweise Reason 209 wurde beobachtet. Mesh-Lite stellte die WLAN- und DHCP-Verbindung wieder her.
+- Der neue TCP-Reconnect verwendet einen Connect-Timeout von 1,5 Sekunden und 500 ms Retry-Abstand. Wiederholte Unterbrechungen sind noch zu testen.
+- Das verwendete ESP32-Modul besitzt 8 MB Flash, während der Build aktuell 4 MB im Image-Header konfiguriert. Die vorhandene Partitionstabelle liegt innerhalb dieses Bereichs; die Flash-Konfiguration sollte bei Bedarf auf 8 MB vereinheitlicht werden.
+- Die von ESP-IoT-Bridge beziehungsweise Mesh-Lite ausgegebenen Warnungen zu Kanal-Bitmaps und initial fehlenden NVS-Werten sind noch separat zu bewerten.
 
-### Pinning
+## Bauen und Flashen
 
-```text
-ESP32      ADAU1701
---------------------
-GPIO21 --> SDATA_IN
-GPIO22 --> LRCLK
-GPIO23 --> BCLK
+ESP-IDF-Version: 5.4.3
 
-3V3    --> VCC
-GND    --> GND
-```
-
-### Hinweise
-
-```text
-Der ADAU1701 kann als DSP-Stufe verwendet werden.
-
-Die Audioquelle (Snapcast oder Bluetooth)
-wird vollständig auf dem ESP32 verwaltet.
-```
-
----
-
-## Bluetooth
-
-Bluetooth-Gerätename:
-
-```text
-Snap-Blth-XXXX
-```
-
-Beispiel:
-
-```text
-Snap-Blth-9904
-```
-
-Die letzten vier Zeichen entsprechen den letzten beiden Bytes der WLAN-MAC-Adresse.
-
----
-
-## Snapcast
-
-Standardparameter:
-
-```text
-Codec       : Opus
-Samplerate  : 48 kHz
-Kanäle      : Stereo
-Bitbreite   : 16 Bit
-```
-
-Die Codec-Erkennung erfolgt automatisch anhand der vom Snapserver übertragenen Streaminformationen.
-
----
-
-## ESP32 Hardware
-
-### Empfohlen
-
-```text
-ESP32-WROVER
-8 MB PSRAM
-```
-
-Getestet:
-
-```text
-✓ Snapcast
-✓ Opus
-✓ Bluetooth A2DP
-✓ Mesh-Lite
-✓ PCM5102A
-✓ ADAU1701
-✓ Automatische Quellenumschaltung
-```
-
-### Nicht empfohlen
-
-```text
-ESP32 ohne PSRAM
-```
-
-Die Kombination aus
-
-- Bluetooth A2DP
-- Mesh-Lite
-- Snapcast
-- Opus-Decoding
-
-beansprucht erhebliche Speicherressourcen.
-
----
-
-## Aktueller Status
-
-```text
-✓ Snapcast stabil
-✓ Opus-Decoding stabil
-✓ Bluetooth A2DP stabil
-✓ A2DP ↔ Snapcast Umschaltung stabil
-✓ PCM5102A getestet
-✓ ADAU1701 getestet
-✓ ESP32-WROVER getestet
-```
-
----
-
-## Projektstart
-
-ESP-IDF Umgebung aktivieren:
-
-```cmd
-C:\esp\v5.4.3\esp-idf\export.bat
-```
-
-Projekt bauen:
-
-```cmd
+```powershell
+cd C:\Users\xxx\Documents\Elektronik\ESP\ESP32_Mesh_Snapclient
 idf.py build
+idf.py -p <CLIENT_COM_PORT> flash monitor
 ```
 
-Flashen:
-
-```cmd
-idf.py -p COM5 flash
-```
-
-Flashen und Monitor starten:
-
-```cmd
-idf.py -p COM5 flash monitor
-```
+`<CLIENT_COM_PORT>` ist der tatsaechliche Port des klassischen ESP32-Snapclients. Der Port darf nicht mit dem Port des ESP32-S3-Snapservers verwechselt werden.

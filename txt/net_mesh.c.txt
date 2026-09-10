@@ -60,6 +60,7 @@ static void wifi_event_handler(void *arg,
         case WIFI_EVENT_STA_DISCONNECTED:
             atomic_store(&s_sta_connected, false);
             atomic_store(&s_sta_has_ip, false);
+            snapclient_set_network_available(false);
             ESP_LOGW(TAG, "STA vom Mesh-Parent getrennt");
             break;
 
@@ -84,6 +85,7 @@ static void ip_event_handler(void *arg,
         (const ip_event_got_ip_t *)event_data;
 
     atomic_store(&s_sta_has_ip, true);
+    snapclient_set_network_available(true);
 
     ESP_LOGI(TAG,
              "Mesh-IP erhalten: " IPSTR ", Gateway/Snapserver: " IPSTR,

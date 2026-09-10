@@ -7,10 +7,11 @@ extern "C" {
 #endif
 
 /**
- * @brief Start ESP-Mesh-Lite as a non-root Snapclient node.
+ * @brief ESP-Mesh-Lite als Non-Root-Snapclient im No-Router-Mesh starten.
  *
- * The Snapclient connection is started automatically after the station
- * interface receives an IP address from the autonomous ESP32-S3 root.
+ * Der ESP32-S3-Snapserver ist der einzige Root auf Level 1. Der TCP-Snapclient
+ * startet automatisch nach IP_EVENT_STA_GOT_IP. Linkverlust und erneute
+ * Netzwerkverfuegbarkeit werden an snapclient_glue weitergegeben.
  */
 esp_err_t net_mesh_start(void);
 

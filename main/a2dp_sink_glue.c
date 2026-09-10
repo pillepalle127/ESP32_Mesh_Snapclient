@@ -165,7 +165,7 @@ static uint32_t sbc_sample_rate(const uint8_t *cie)
  *     A8:42:E3:AE:99:04
  *
  *   Bluetooth-Name:
- *     SnapMesh-Speaker-9904
+ *     Snap-Blth-9904
  *
  * Die STA-MAC wird bewusst auch für den lesbaren Bluetooth-Namen verwendet,
  * damit Snapcast- und Bluetooth-Gerät eindeutig zugeordnet werden können.
@@ -491,10 +491,10 @@ esp_err_t a2dp_sink_start(void)
     }
 
     /*
-     * Bluetooth-Controller im BTDM-Modus initialisieren.
+     * Bluetooth-Controller im Classic-Bluetooth-Modus (BR/EDR) initialisieren.
      *
-     * BTDM aktiviert Classic Bluetooth und BLE.
-     * A2DP verwendet Classic Bluetooth.
+     * A2DP und AVRCP verwenden Bluetooth Classic. BLE wird fuer diesen
+     * Anwendungsfall nicht benoetigt.
      */
     esp_bt_controller_config_t bt_config =
         BT_CONTROLLER_INIT_CONFIG_DEFAULT();
@@ -645,7 +645,7 @@ esp_err_t a2dp_sink_start(void)
 
     ESP_LOGI(
         TAG,
-        "A2DP-Sink aktiv als '%s' (BTDM)",
+        "A2DP-Sink aktiv als '%s' (BR/EDR)",
         s_bt_device_name);
 
     return ESP_OK;

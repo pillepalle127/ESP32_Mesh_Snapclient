@@ -14,6 +14,8 @@
  *     - sucht selbststaendig einen passenden Mesh-Lite-Parent
  *     - benoetigt keinen externen WLAN-Router
  *     - startet den TCP-Snapclient erst nach IP_EVENT_STA_GOT_IP
+ *     - meldet Linkverlust und neue IP an den Snapclient, damit blockierende
+ *       TCP-Reconnects vermieden und laufende Sockets sofort beendet werden
  */
 
 #include "net_mesh.h"

@@ -9,17 +9,17 @@
 extern "C" {
 #endif
 
-/** Snapclient-Task starten. Der TCP-Aufbau wartet auf Netzwerkfreigabe. */
+/** Snapclient-Task starten; der TCP-Aufbau wartet auf eine gueltige Mesh-IP. */
 esp_err_t snapclient_start(const char *host, uint16_t port);
 
 /**
- * Aktuellen Mesh-/IP-Netzwerkzustand an den Snapclient melden.
- * false bricht einen laufenden Socket sofort per shutdown() ab.
+ * Mesh-/IP-Netzwerkzustand melden.
+ * false unterbricht den laufenden Socket sofort per shutdown().
  * true gibt einen unmittelbaren, zeitlich begrenzten Reconnect frei.
  */
 void snapclient_set_network_available(bool available);
 
-/** Pause/Resume fuer die A2DP-Koexistenz. */
+/** Snapcast fuer einen aktiven A2DP-Audiostream pausieren oder fortsetzen. */
 void snapclient_pause(bool pause);
 
 #ifdef __cplusplus

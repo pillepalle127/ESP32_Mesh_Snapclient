@@ -4,7 +4,7 @@
  *
  * Funktionen:
  *
- * - TCP-Verbindung zum Snapserver
+ * - TCP-Verbindung zum Snapserver mit nichtblockierendem Connect und Timeout
  * - Snapcast Protocol Version 2
  * - Eindeutige Identifikation ueber die WLAN-STA-MAC
  * - PCM-Direktpfad
@@ -12,6 +12,8 @@
  * - Uebergabe an den Source-Arbiter
  * - Pause und Resume bei aktivem A2DP-Audiostream
  * - Schutz vor paralleler Opus-Dekodierung waehrend A2DP
+ * - Sofortiger Socket-Abbruch bei Mesh-/IP-Verlust
+ * - Sofortige Reconnect-Freigabe nach erneutem IP_EVENT_STA_GOT_IP
  * - Scheduler-Entlastung nach jeder Snapcast-Nachricht
  */
 
@@ -274,7 +276,11 @@ static int read_full(
  * ------------------------------------------------------------------------- */
 
 /**
- * @brief TCP-Verbindung zum konfigurierten Snapserver herstellen.
+ * @brief Zeitlich begrenzte TCP-Verbindung zum konfigurierten Snapserver herstellen.
+ *
+ * connect() arbeitet zunaechst nichtblockierend. select() begrenzt einen
+ * Verbindungsversuch auf SNAP_CONNECT_TIMEOUT_MS. Ohne gueltige Mesh-IP oder
+ * waehrend einer A2DP-Pause wird kein Verbindungsversuch gestartet.
  */
 static int tcp_connect(void)
 {
@@ -1308,7 +1314,10 @@ static void snap_task(void *argument)
  * ------------------------------------------------------------------------- */
 
 /**
- * @brief Snapcast wegen eines aktiven A2DP-Audiostreams pausieren.
+ * @brief Verfuegbarkeit der Mesh-IP an den Snapclient melden.
+ *
+ * Bei Netzwerkverlust wird ein laufender Socket per shutdown() unterbrochen.
+ * Nach erneutem GOT_IP wird der Reconnect unmittelbar freigegeben.
  */
 void snapclient_set_network_available(bool available)
 {
@@ -1339,6 +1348,9 @@ void snapclient_set_network_available(bool available)
     }
 }
 
+/**
+ * @brief Snapcast wegen eines aktiven A2DP-Audiostreams pausieren oder fortsetzen.
+ */
 void snapclient_pause(bool pause)
 {
     if (pause) {

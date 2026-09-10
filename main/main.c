@@ -2,12 +2,14 @@
  * @file  main.c
  * @brief Einstiegspunkt: Init-Reihenfolge fuer Mesh-Lite Snapclient + A2DP.
  *
- * Projekt: ESP32 WROVER, IDF v5.5.x
+ * Projekt: ESP32-WROVER, ESP-IDF v5.4.3
  *   [Snapclient] --\
  *                   >-- Source-Arbiter -- Ringpuffer -- I2S(Master) -- ADAU1701
  *   [A2DP-Sink]  --/
  *
- * Es streamt immer nur EINE Quelle (WLAN/BT teilen sich ein Funkmodul).
+ * Es wird immer nur eine Audioquelle ausgegeben. Bei aktivem A2DP-
+ * Audiostream pausiert der Arbiter den Snapclient; die Mesh-Verbindung bleibt
+ * aktiv. Nach A2DP-Ende wird Snapcast automatisch wieder verbunden.
  */
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -48,14 +50,15 @@ void app_main(void)
     ESP_ERROR_CHECK(arbiter_init(PRIO_A2DP_FIRST));
     arbiter_register_snap_pause_cb(snapclient_pause);
 
-    /* 5) Mesh-Lite starten (WLAN self-organizing/-healing) */
+    /* 5) Mesh-Lite im autonomen No-Router-Modus starten.
+     *    Der ESP32-S3-Snapserver ist Root/Level 1. Dieser Client darf nur
+     *    Level 2 oder hoeher annehmen. Der Snapclient startet erst nach GOT_IP. */
     ESP_ERROR_CHECK(net_mesh_start());
 
-    /* 6) Quellen anmelden.
-     *    Hinweis Koexistenz: A2DP + aktives WLAN-Streaming stoeren sich.
-     *    Der Arbiter pausiert daher den Snapclient, sobald A2DP verbindet. */
-    //ESP_ERROR_CHECK(snapclient_start(CONFIG_SNAPSERVER_HOST, CONFIG_SNAPSERVER_PORT));   /* verbindet sich mit Snapserver  */
-    ESP_ERROR_CHECK(a2dp_sink_start());    /* wartet auf BT-Quelle           */
+    /* 6) A2DP-Sink starten.
+     *    Der Snapclient wird nicht hier gestartet, sondern von net_mesh.c nach
+     *    IP_EVENT_STA_GOT_IP. A2DP erhaelt erst bei AUDIO_STATE_STARTED Vorrang. */
+    ESP_ERROR_CHECK(a2dp_sink_start());
 
     ESP_LOGI(TAG, "init complete");
 }
